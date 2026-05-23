@@ -162,23 +162,35 @@ type BidirectionalGraphStore interface {
 
 This reduces database round-trips from 2 to 1 per hop. The `GraphRetriever` discovers this via type assertion and falls back to separate `GetEdges` + `GetIncomingEdges` calls if not implemented.
 
-## Implementing MemoryStore
+## Implementing ItemStore
 
-For user memory support, implement `MemoryStore`:
+To support the `memory` package's structured semantic memory, implement `memory.ItemStore`:
 
 ```go
-func (s *Store) UpsertFact(ctx context.Context, fact, category string, embedding []float32) error {
-    // 1. Search for semantically similar existing facts (cosine > 0.85)
-    // 2. If found: merge (increment confidence by 0.1, cap at 1.0)
-    // 3. If not: insert new fact with confidence = 1.0
+import "github.com/nevindra/oasis/memory"
+
+func (s *Store) Upsert(ctx context.Context, item memory.MemoryItem) error {
+    // Insert or update by item.ID; update UpdatedAt when item already exists
     return nil
+}
+
+func (s *Store) SearchSemantic(ctx context.Context, embedding []float32, filter memory.Filter, topK int) ([]memory.ScoredItem, error) {
+    // Cosine similarity search filtered by filter.Kinds, filter.Scope, filter.Tags, etc.
+    return results, nil
 }
 ```
 
-Key behaviors to preserve:
-- **Semantic deduplication** — similar facts (cosine > 0.85) merge, not duplicate
-- **Confidence scoring** — new: 1.0, reinforced: +0.1, decayed: ×0.95 after 7 days
-- **Pruning** — facts with confidence < 0.3 and age > 30 days are removed
+The satellite stores (`store/sqlite`, `store/postgres`) implement this against a `memory_items` table. Implement all `ItemStore` methods and add a compile-time check:
+
+```go
+var _ memory.ItemStore = (*Store)(nil)
+```
+
+Key `ItemStore` behaviors to preserve:
+- `Upsert` — insert on new ID; update all fields except `CreatedAt` on collision; set `UpdatedAt = now`
+- `DeleteWhere` — reject an empty `Filter` with an error (safeguard against accidental full wipe)
+- `SearchSemantic` — skip items with no embedding (not an error); return results sorted by cosine similarity descending
+- `List` — return in `CreatedAt`-descending order; respect `filter.Limit` (default 50 when 0)
 
 ## Chunk Metadata
 
@@ -198,5 +210,6 @@ The `ByMeta(key, value)` chunk filter should query into this JSON field.
 ## See Also
 
 - [Store Concept](../concepts/store.md) — full interface and schema reference
-- [Memory Concept](../concepts/memory.md) — MemoryStore interface
+- [Memory Concept](../concepts/memory.md) — MemoryItem, ItemStore, ingest/retrieve pipelines
+- [API: memory](../api/memory.md) — full memory package reference
 - [Retrieval](../concepts/rag.md) — how retrievers use Store capabilities

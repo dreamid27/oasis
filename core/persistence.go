@@ -17,12 +17,6 @@ type ScoredChunk struct {
 	Score float32
 }
 
-// ScoredFact is a Fact paired with its cosine similarity score.
-type ScoredFact struct {
-	Fact
-	Score float32
-}
-
 type Document struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -165,16 +159,6 @@ type Message struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	Embedding []float32      `json:"-"`
 	CreatedAt int64          `json:"created_at"`
-}
-
-type Fact struct {
-	ID         string    `json:"id"`
-	Fact       string    `json:"fact"`
-	Category   string    `json:"category"`
-	Confidence float64   `json:"confidence"`
-	Embedding  []float32 `json:"-"`
-	CreatedAt  int64     `json:"created_at"`
-	UpdatedAt  int64     `json:"updated_at"`
 }
 
 // Scheduled action (DB record)

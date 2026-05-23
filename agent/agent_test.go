@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/nevindra/oasis/core"
-	"github.com/nevindra/oasis/history"
+	"github.com/nevindra/oasis/memory"
 )
 
 // ptr returns a pointer to v. Test helper for optional Generation fields.
@@ -823,7 +823,7 @@ func TestContextCompression(t *testing.T) {
 	// (~2002 runes) and starts compressing old iterations from iteration 3.
 	agent := NewLLMAgent("compressor", "Tests compression", trackingProvider,
 		WithTools(bigResultTool{}),
-		WithHistory(history.Compress(func(_ context.Context, _ AgentTask) Provider { return compressProvider }, 1500)),
+		WithMemory(memory.WithCompress(func(_ context.Context, _ AgentTask) Provider { return compressProvider }, 1500)),
 		WithLimits(Limits{MaxIter: 10}),
 	)
 
@@ -943,7 +943,7 @@ func TestWithSuspendBudgetOption(t *testing.T) {
 }
 
 func TestWithCompressThresholdOption(t *testing.T) {
-	cfg := BuildConfig([]AgentOption{WithHistory(history.Compress(nil, 100_000))})
+	cfg := BuildConfig([]AgentOption{WithMemory(memory.WithCompress(nil, 100_000))})
 	if cfg.compressThreshold != 100_000 {
 		t.Errorf("compressThreshold = %d, want 100000", cfg.compressThreshold)
 	}
@@ -1315,35 +1315,19 @@ func (f *fakeEmbeddingProvider) Embed(_ context.Context, texts []string) ([][]fl
 func (f *fakeEmbeddingProvider) Dimensions() int { return 1 }
 func (f *fakeEmbeddingProvider) Name() string    { return f.name }
 
-type fakeMemoryStore struct{}
-
-func (fakeMemoryStore) Init(_ context.Context) error                                           { return nil }
-func (fakeMemoryStore) UpsertFact(_ context.Context, _, _ string, _ []float32) error          { return nil }
-func (fakeMemoryStore) SearchFacts(_ context.Context, _ []float32, _ int) ([]ScoredFact, error) { return nil, nil }
-func (fakeMemoryStore) DeleteFact(_ context.Context, _ string) error                           { return nil }
-func (fakeMemoryStore) DeleteMatchingFacts(_ context.Context, _ string) error                  { return nil }
-func (fakeMemoryStore) DecayOldFacts(_ context.Context) error                                  { return nil }
-func (fakeMemoryStore) BuildContext(_ context.Context, _ []float32) (string, error)            { return "", nil }
-
-// TestBuildConfigSharedEmbedding verifies the post-4B-a design: a single
-// agent-level WithEmbedding feeds both WithUserMemory and
-// history.CrossThreadSearch. The previous "conflicting providers" panic is
-// impossible by construction — there is only one embedding slot.
+// TestBuildConfigSharedEmbedding verifies the design: a single agent-level
+// WithEmbedding propagates through to memory features (semantic recall and
+// similar). WithMemory can also supply its own embedding via memory.WithEmbedding.
 func TestBuildConfigSharedEmbedding(t *testing.T) {
 	em := &fakeEmbeddingProvider{name: "em"}
-	mem := &fakeMemoryStore{}
 
 	cfg := BuildConfig([]AgentOption{
 		WithEmbedding(em),
-		WithUserMemory(mem),
-		WithHistory(history.CrossThreadSearch()),
+		WithMemory(memory.WithSemanticRecall()),
 	})
 
 	if cfg.embedding != em {
 		t.Errorf("expected embedding %p, got %p", em, cfg.embedding)
-	}
-	if cfg.memory != mem {
-		t.Errorf("expected memory store wired")
 	}
 	if !cfg.crossThreadSearch {
 		t.Errorf("expected crossThreadSearch enabled")

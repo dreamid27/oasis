@@ -132,7 +132,7 @@ Close() error    // clean up connections
 | `store/sqlite` | `sqlite.New(path, opts...)` | Local pure-Go SQLite (`modernc.org/sqlite`) |
 | `store/postgres` | `postgres.New(pool, opts...)` | PostgreSQL + pgvector (HNSW indexes) |
 
-Both packages also ship a `MemoryStore` implementation in the same package — see [Memory](memory.md).
+Both packages also implement `memory.ItemStore` for structured `MemoryItem` storage — see [Memory](memory.md).
 
 **SQLite:**
 
@@ -149,8 +149,8 @@ Both packages also ship a `MemoryStore` implementation in the same package — s
 
 - Uses native `vector` columns with HNSW indexes for cosine distance search
 - Full-text search via `tsvector`/`tsquery` with GIN index (no FTS5 virtual table)
-- Accepts an externally-owned `*pgxpool.Pool` — share one pool across Store, MemoryStore, and your app
-- Also implements `MemoryStore` in the same package (`postgres.NewMemoryStore(pool, opts...)`)
+- Accepts an externally-owned `*pgxpool.Pool` — share one pool across Store and your app
+- Also implements `memory.ItemStore` (structured semantic memory) in the same package
 - Requires PostgreSQL with the `pgvector` extension installed
 - **`WithEmbeddingDimension(dim)` is required** — pgvector HNSW indexes need typed `vector(N)` columns. `Init()` returns an error if not set.
 - Tuning options: `WithHNSWM(m)`, `WithEFConstruction(ef)`, `WithEFSearch(ef)`
@@ -252,14 +252,15 @@ scheduled_actions (id, description, schedule, tool_calls, synthesis_prompt,
 -- Ingest pipeline
 ingest_checkpoints (document_id PRIMARY KEY, last_chunk_index, completed, updated_at)
 
--- User memory (MemoryStore)
-user_facts (id, fact, category, confidence, embedding,
-            source_message_id, created_at, updated_at)
+-- Structured memory (memory.ItemStore)
+memory_items (id, kind, content, scope_kind, scope_ref,
+              source_kind, source_ref, source_agent_id,
+              pinned, tags, embedding, created_at, updated_at, expires_at)
 ```
 
 ### PostgreSQL Schema (pgvector)
 
-Full DDL as created by `Store.Init()` and `MemoryStore.Init()`. Requires the `pgvector` extension.
+Full DDL as created by `Store.Init()`. Requires the `pgvector` extension.
 
 ```sql
 -- Extension
@@ -351,18 +352,24 @@ CREATE TABLE IF NOT EXISTS chunk_edges (
 CREATE INDEX IF NOT EXISTS idx_chunk_edges_source ON chunk_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_edges_target ON chunk_edges(target_id);
 
--- User Facts (MemoryStore — created by MemoryStore.Init())
-CREATE TABLE IF NOT EXISTS user_facts (
-    id                TEXT PRIMARY KEY,
-    fact              TEXT NOT NULL,
-    category          TEXT NOT NULL,
-    confidence        REAL DEFAULT 1.0,
-    embedding         vector(N),  -- N from WithEmbeddingDimension (required)
-    source_message_id TEXT,
-    created_at        BIGINT NOT NULL,
-    updated_at        BIGINT NOT NULL
+-- Structured memory items (memory.ItemStore)
+CREATE TABLE IF NOT EXISTS memory_items (
+    id              TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    scope_kind      TEXT NOT NULL,
+    scope_ref       TEXT NOT NULL DEFAULT '',
+    source_kind     TEXT NOT NULL DEFAULT '',
+    source_ref      TEXT NOT NULL DEFAULT '',
+    source_agent_id TEXT NOT NULL DEFAULT '',
+    pinned          BOOLEAN NOT NULL DEFAULT FALSE,
+    tags            TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    embedding       vector(N),                    -- N from WithEmbeddingDimension (required)
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    expires_at      BIGINT NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS user_facts_embedding_idx ON user_facts USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS memory_items_embedding_idx ON memory_items USING hnsw (embedding vector_cosine_ops);
 ```
 
 ### PostgreSQL Notes
@@ -370,12 +377,12 @@ CREATE INDEX IF NOT EXISTS user_facts_embedding_idx ON user_facts USING hnsw (em
 | Topic | Detail |
 | ----- | ------ |
 | **Vector columns** | `WithEmbeddingDimension(N)` is **required** — creates `vector(N)` columns needed for HNSW indexes. `Init()` returns an error if not set. Common values: 768 (Gemini), 1536 (OpenAI ada-002), 3072 (OpenAI text-embedding-3-large). Only affects new tables. |
-| **HNSW indexes** | Created on `messages.embedding`, `chunks.embedding`, and `user_facts.embedding`. Tunable via `WithHNSWM(m)` and `WithEFConstruction(ef)` — appended as `WITH (m = M, ef_construction = EF)` on `CREATE INDEX`. |
+| **HNSW indexes** | Created on `messages.embedding`, `chunks.embedding`, and `memory_items.embedding`. Tunable via `WithHNSWM(m)` and `WithEFConstruction(ef)` — appended as `WITH (m = M, ef_construction = EF)` on `CREATE INDEX`. |
 | **ef_search** | Set via `WithEFSearch(ef)`. Applied as `SET hnsw.ef_search = N` (session-level) during `Init()`. Higher values improve recall at the cost of latency. |
 | **Full-text search** | GIN expression index on `to_tsvector('english', content)` — no separate FTS table (unlike SQLite's FTS5 virtual table). Queries use `plainto_tsquery`. |
 | **Metadata** | Stored as `JSONB`. Chunk metadata filters use `metadata->>'key'` operator. Message/thread metadata stored as `JSONB` with `::jsonb` casts on insert. |
 | **Timestamps** | All `created_at` / `updated_at` columns are `BIGINT` (Unix seconds), not SQL timestamps. |
-| **Connection pool** | Both `Store` and `MemoryStore` accept an externally-owned `*pgxpool.Pool`. The caller creates and closes the pool. `Store.Close()` is a no-op. |
+| **Connection pool** | `Store` accepts an externally-owned `*pgxpool.Pool`. The caller creates and closes the pool. `Store.Close()` is a no-op. |
 | **Idempotent init** | All DDL uses `IF NOT EXISTS`. Safe to call `Init()` on every startup. |
 | **Transactions** | `StoreDocument` (doc + chunks), `DeleteDocument` (edges + chunks + doc), `DeleteThread` (messages + thread), and `StoreEdges` (batch) run in transactions. |
 
@@ -483,7 +490,7 @@ if ml, ok := store.(oasis.DocumentMetaLister); ok {
 
 ## See Also
 
-- [Memory](memory.md) — MemoryStore for user facts (separate interface)
+- [Memory](memory.md) — MemoryItem and ItemStore for structured semantic memory
 - [Ingest](ingest.md) — document chunking pipeline that writes to Store
 - [Retrieval](rag.md) — search pipeline that reads from Store
 - [Custom Store Guide](../guides/custom-store.md)

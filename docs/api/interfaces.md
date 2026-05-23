@@ -258,27 +258,34 @@ type SkillWriter interface {
 
 ---
 
-## MemoryStore
+## ItemStore
 
-**File:** `memory.go`
+**Package:** `github.com/nevindra/oasis/memory`
+**File:** `memory/store.go`
+
+Stores `MemoryItem` values. Independent of `core.Store` (which handles conversation messages and threads). Satellite store packages implement both.
 
 ```go
-type MemoryStore interface {
-    UpsertFact(ctx context.Context, fact, category string, embedding []float32) error
-    SearchFacts(ctx context.Context, embedding []float32, topK int) ([]ScoredFact, error)
-    BuildContext(ctx context.Context, queryEmbedding []float32) (string, error)
-    DeleteFact(ctx context.Context, factID string) error
-    // pattern is a plain substring match — never SQL LIKE or regex.
-    DeleteMatchingFacts(ctx context.Context, pattern string) error
-    DecayOldFacts(ctx context.Context) error
+type ItemStore interface {
     Init(ctx context.Context) error
+    Upsert(ctx context.Context, item memory.MemoryItem) error
+    UpsertBatch(ctx context.Context, items []memory.MemoryItem) error
+    Delete(ctx context.Context, id string) error
+    DeleteWhere(ctx context.Context, filter memory.Filter) (int, error)
+    Get(ctx context.Context, id string) (memory.MemoryItem, error)
+    List(ctx context.Context, filter memory.Filter) ([]memory.MemoryItem, error)
+    SearchSemantic(ctx context.Context, embedding []float32, filter memory.Filter, topK int) ([]memory.ScoredItem, error)
 }
 ```
 
+`memory.Store` is the composite interface that combines `core.Store` and `ItemStore` — pass one object to `memory.WithStore(store)`.
+
 | Implementation | Constructor |
 |----------------|------------|
-| `store/sqlite` | `sqlite.NewMemoryStore(db *sql.DB)` |
-| `store/postgres` | `postgres.NewMemoryStore(pool *pgxpool.Pool)` |
+| `store/sqlite` | `sqlite.New(path)` (implements both `core.Store` and `memory.ItemStore`) |
+| `store/postgres` | `postgres.New(pool)` (implements both) |
+
+See [API: memory](memory.md) for the full `memory` package reference.
 
 ---
 

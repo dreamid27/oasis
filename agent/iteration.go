@@ -316,7 +316,7 @@ func runIteration(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<-
 		}
 
 		endIter(FinishStop)
-		cfg.mem.PersistMessages(iterCtx, cfg.name, task, task.Input, content, state.steps)
+		cfg.mem.PersistTurn(iterCtx, cfg.name, task, task.Input, content, state.steps)
 		result := AgentResult{
 			Output:       content,
 			Thinking:     state.lastThinking,

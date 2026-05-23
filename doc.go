@@ -11,7 +11,6 @@
 //	provider := gemini.New(apiKey, model)
 //	embedding := gemini.NewEmbedding(apiKey)
 //	store := sqlite.New("oasis.db")
-//	memoryStore := sqlitemem.New("memory.db")
 //
 //	agent := oasis.NewLLMAgent(
 //		"assistant",
@@ -21,9 +20,11 @@
 //			knowledge.New(store, embedding),
 //			search.New(),
 //		),
-//		oasis.WithEmbedding(embedding),
-//		oasis.WithHistory(history.Store(store), history.CrossThreadSearch()),
-//		oasis.WithUserMemory(memoryStore),
+//		oasis.WithMemory(
+//			memory.WithStore(store),
+//			memory.WithEmbedding(embedding),
+//			memory.WithSemanticRecall(),
+//		),
 //	)
 //
 //	result, err := agent.Execute(ctx, "What's the weather like?")
@@ -36,7 +37,7 @@
 //   - [Provider] — LLM backend (chat, tool calling, streaming)
 //   - [EmbeddingProvider] — text-to-vector embedding
 //   - [Store] — persistence with vector search
-//   - [MemoryStore] — long-term semantic memory
+//   - [AgentMemory] — unified memory orchestrator (Remember/Recall/Forget/Pin)
 //   - [AnyTool] — pluggable atomic capability for LLM function calling (use [Tool] for type-safe authoring + [Erase])
 //   - [PreProcessor], [PostProcessor], [PostToolProcessor] — message/response/tool result transformers
 //

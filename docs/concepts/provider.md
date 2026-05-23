@@ -57,7 +57,7 @@ type EmbeddingProvider interface {
 }
 ```
 
-Converts text to vectors for semantic search. Used by Store (vector search), MemoryStore (fact deduplication), and agents (cross-thread recall).
+Converts text to vectors for semantic search. Used by Store (vector search), the memory package (MemoryItem deduplication + recall), and agents (cross-thread recall).
 
 ## MultimodalEmbeddingProvider Interface
 

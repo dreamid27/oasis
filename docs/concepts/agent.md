@@ -69,12 +69,12 @@ flowchart TD
 - **Parallel tool execution** — when the LLM returns multiple tool calls in one response, they run concurrently via a fixed worker pool of `min(len(calls), 10)` goroutines pulling from a shared work channel. The dispatch is context-aware: if `ctx` is cancelled while tool calls are in-flight, the function returns immediately with error results for incomplete calls. Single calls run inline without goroutine overhead. Individual tool panics are caught by recovery wrappers and converted to error results (`"error: tool <name> panic: <value>"`) — a panicking tool never crashes the agent
 - **Max iterations** — defaults to 10. When reached, the agent appends a synthesis prompt (`"You have used all available tool calls. Summarize what you found and respond to the user."`) and makes one final LLM call without tools. PostProcessor hooks run on the synthesis response as well
 - **Streaming** — LLMAgent implements `StreamingAgent`. Emits `StreamEvent` values throughout execution: tool call start/result events during tool iterations, text-delta events during the final response. All channel sends are context-guarded — if the consumer stops reading or the context is cancelled, the agent loop exits cleanly instead of blocking
-- **Memory** — stateless by default. Enable with `WithConversationMemory` and `WithUserMemory`
+- **Memory** — stateless by default. Enable conversation history, semantic recall, compaction, compression, and structured `MemoryItem` memory through a single `WithMemory(memory.Option...)` entry point
 - **Cached tool definitions** — when using static tools (no `WithDynamicTools`), tool definitions are computed once at construction time and reused across `Execute` calls. Dynamic tools still rebuild per-request
 - **Bounded attachments** — tool-result attachments are accumulated up to a cap of 50 per execution and a byte budget (default 50 MB, configurable via `WithMaxAttachmentBytes`). This prevents unbounded memory growth in long-running loops with attachment-heavy tools
 - **Tool result truncation** — tool results exceeding 100,000 runes (~25K tokens) are truncated in the message history with an `[output truncated]` marker. Stream events and step traces retain the full content. This prevents unbounded memory growth from tools returning very large outputs
 - **Suspend snapshot budget** — per-agent limits on concurrent suspended states: max snapshots (default 20) and max bytes (default 256 MB), configurable via `WithSuspendBudget`. When the budget is exceeded, suspension is rejected with an error instead of leaking memory. Counters are decremented when `Resume()` or `Release()` is called
-- **Context compression** — per-turn LLM summarization of old tool results when message rune count exceeds the threshold set by `WithCompressThreshold`. **Disabled by default** (the old 200K default is gone). Uses a dedicated provider when configured via `WithCompressModel`, falling back to the main provider. The last 2 iterations are always preserved intact. Degrades gracefully on error (continues uncompressed). For long-running chat threads, prefer per-thread compaction via [`WithCompaction`](compaction.md) — per-turn compression remains useful for narrow scopes where tool results bloat a single execution; per-thread compaction is the better default for ongoing conversations
+- **Context compression** — per-turn LLM summarization of old tool results when message rune count exceeds the threshold set by `memory.WithCompress(fn, threshold)` inside `WithMemory`. **Disabled by default**. `fn` returns a dedicated provider for the summarization call (nil falls back to the main provider). The last 2 iterations are always preserved intact. Degrades gracefully on error (continues uncompressed). For long-running chat threads, prefer per-thread compaction via [`memory.WithCompaction`](compaction.md) — per-turn compression remains useful for narrow scopes where tool results bloat a single execution; per-thread compaction is the better default for ongoing conversations
 - **Generation parameters** — `WithTemperature`, `WithTopP`, `WithTopK`, `WithMaxTokens` set per-agent LLM sampling parameters. All fields are pointer types — nil means "use provider default", so agents sharing one provider can have different temperatures without creating separate provider instances. Parameters are injected into every `ChatRequest.GenerationParams`; providers map them to their native API
 - **Thinking visibility** — when the LLM returns reasoning/chain-of-thought content (e.g., Gemini thinking mode), it's captured in `ChatResponse.Thinking` and exposed via `AgentResult.Thinking` (last reasoning before the final response). An `EventThinking` stream event fires after each LLM call when thinking is present. PostProcessors can inspect reasoning for guardrails or debugging via the full `ChatResponse`
 
@@ -149,13 +149,9 @@ Options shared by `NewLLMAgent` and `NewNetwork`:
 | `WithDynamicPrompt(fn PromptFunc)` | Per-request system prompt resolution |
 | `WithDynamicModel(fn ModelFunc)` | Per-request provider/model selection |
 | `WithDynamicTools(fn ToolsFunc)` | Per-request tool set (replaces static tools) |
-| `WithConversationMemory(s Store, opts...)` | Enable history load/persist per thread |
-| `WithEmbedding(e EmbeddingProvider)` | Set the shared embedding provider for use by `WithUserMemory` and cross-thread search |
-| `WithUserMemory(m MemoryStore)` | Enable user fact injection + auto-extraction (requires `WithEmbedding`) |
+| `WithMemory(opts ...memory.Option)` | Single entry point for all memory features: conversation history (`memory.WithStore`, `memory.WithMaxHistory`, `memory.WithMaxTokens`), cross-thread semantic recall (`memory.WithSemanticRecall`), semantic trimming (`memory.WithSemanticTrimming`), auto-titling (`memory.WithAutoTitle`), per-thread compaction (`memory.WithCompaction`), per-turn compression (`memory.WithCompress`), and structured `MemoryItem` storage (facts, notes, events, playbooks) |
 | `WithMaxAttachmentBytes(n int64)` | Max accumulated attachment bytes per execution (default 50 MB) |
 | `WithSuspendBudget(maxSnapshots int, maxBytes int64)` | Per-agent suspend snapshot limits (default 20 snapshots, 256 MB) |
-| `WithCompressModel(fn ModelFunc)` | Provider for LLM-driven per-turn context compression (falls back to main provider). See [`WithCompaction`](compaction.md) for per-thread compaction (preferred for long threads) |
-| `WithCompressThreshold(n int)` | Rune count threshold for per-turn tool-result compression. **Disabled by default** (zero or negative). For long threads, prefer [per-thread compaction](compaction.md) |
 | `WithTemperature(t float64)` | Set LLM sampling temperature (nil = provider default) |
 | `WithTopP(p float64)` | Set nucleus sampling probability (nil = provider default) |
 | `WithTopK(k int)` | Set top-K sampling parameter (nil = provider default) |
@@ -554,9 +550,9 @@ Construction-only options (deliberately absent from `RunOptions`):
 
 - `WithSandbox` — infrastructure wiring
 - `WithSubAgentSpawning` — agent-level capability policy
-- `WithUserMemory(store, embedder)` — provider wiring (use `Memory` to swap orchestrator)
+- `WithMemory(...)` — memory system wiring (store, embedding, tools)
 - `WithSkills(provider)` — skill provider registration
-- `WithHistory` / `WithToolResultStore` / `WithMaxParallelDispatch` — runtime resource wiring
+- `WithToolResultStore` / `WithMaxParallelDispatch` — runtime resource wiring
 
 If you need per-request variation of these, file an issue.
 

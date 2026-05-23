@@ -6,9 +6,9 @@
 
 Oasis ships two compression primitives. They solve different problems.
 
-**Per-turn compression** (`WithCompressThreshold`, `WithCompressModel`) rewrites old tool results inside the history of a single `Execute` call. It's bounded in scope — the summary lives until the end of that turn and is rebuilt from scratch on the next one. Useful when a single execution bloats on large tool results, but unsafe for skill-heavy agents (skill activation messages can be summarized away) and useless for durable thread state.
+**Per-turn compression** (`memory.WithCompress(fn, threshold)` inside `WithMemory`) rewrites old tool results inside the history of a single `Execute` call. It's bounded in scope — the summary lives until the end of that turn and is rebuilt from scratch on the next one. Useful when a single execution bloats on large tool results, but unsafe for skill-heavy agents (skill activation messages can be summarized away) and useless for durable thread state.
 
-**Per-thread compaction** (`Compactor`) summarizes the loaded conversation into a 9-section structured document and hands the model that summary plus the current turn. The summary is assembled on demand during `buildMessages` — the underlying store is unchanged, so the full history remains available for recall, audit, or re-compaction with a different focus hint. This is the right strategy for long-lived assistants: the model sees a dense context while the store keeps the raw record.
+**Per-thread compaction** (`memory.WithCompaction(c, threshold)` inside `WithMemory`) summarizes the loaded conversation into a 9-section structured document and hands the model that summary plus the current turn. The summary is assembled on demand during `buildMessages` — the underlying store is unchanged, so the full history remains available for recall, audit, or re-compaction with a different focus hint. This is the right strategy for long-lived assistants: the model sees a dense context while the store keeps the raw record.
 
 Per-turn compression is **disabled by default**. Per-thread compaction is the recommended path for ongoing conversations.
 
@@ -52,23 +52,26 @@ The prompt also forces text-only output — any tool call from the summarizer is
 
 ## Wiring It Up
 
-Pass `WithCompaction` to `WithConversationMemory`:
+Pass `memory.WithCompaction` to `WithMemory`:
 
 ```go
+import "github.com/nevindra/oasis/compaction"
+
 summarizer := resolve.Provider(resolve.Config{
     Platform: "openai",
     Model:    "gpt-5-mini", // cheaper than the chat model — compaction runs rarely
 })
 
 agent := oasis.NewLLMAgent("assistant", "Long-running helper", chatProvider,
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(100_000),
-        oasis.WithCompaction(oasis.NewStructuredCompactor(summarizer), 0.80),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithMaxTokens(100_000),
+        memory.WithCompaction(compaction.NewStructuredCompactor(summarizer), 0.80),
     ),
 )
 ```
 
-The threshold (`0.80`) is a fraction of the `MaxTokens` budget configured on the same `WithConversationMemory` call. When the loaded history's estimated tokens cross `threshold × MaxTokens`, the Compactor runs and the loaded history is replaced in-memory with a single `[Prior conversation summary]` system message. If `MaxTokens` is 0 or `MaxTokens` isn't set, auto-compaction is a noop — the threshold has nothing to scale against. Passing `nil` as the Compactor or `threshold ≤ 0` also disables the option.
+The threshold (`0.80`) is a fraction of the `MaxTokens` budget configured on the same `WithMemory` call. When the loaded history's estimated tokens cross `threshold × MaxTokens`, the Compactor runs and the loaded history is replaced in-memory with a single `[Prior conversation summary]` system message. If `MaxTokens` is 0 or `MaxTokens` isn't set, auto-compaction is a noop — the threshold has nothing to scale against. Passing `nil` as the Compactor or `threshold ≤ 0` also disables the option.
 
 On Compactor error, the option falls back silently to the existing token-based trim path; a `Warn` is logged.
 
@@ -157,9 +160,9 @@ See [`api/errors.md`](../api/errors.md#compaction-errors).
 
 ## When NOT to Use the Framework's Auto-Trigger
 
-`WithCompaction` is a convenience. It fires the Compactor automatically when the loaded history crosses `threshold × MaxTokens`, inside the conversation-memory load path. The result lives only for that turn — the underlying store is not rewritten.
+`memory.WithCompaction` is a convenience. It fires the Compactor automatically when the loaded history crosses `threshold × MaxTokens`, inside the conversation-memory load path. The result lives only for that turn — the underlying store is not rewritten.
 
-Consumers that need **persisted** compacts — writing summaries back to the store, merging compacts across threads, handling re-compact ordering, or plumbing compacts into application-specific state — should NOT use `WithCompaction`. They construct pre-compacted message lists at the application layer and hand the agent a ready-to-run history.
+Consumers that need **persisted** compacts — writing summaries back to the store, merging compacts across threads, handling re-compact ordering, or plumbing compacts into application-specific state — should NOT use `memory.WithCompaction`. They construct pre-compacted message lists at the application layer and hand the agent a ready-to-run history.
 
 The `Compactor` interface and `StructuredCompactor` are useful in that setup too. Call `Compact` directly; skip the agent option.
 

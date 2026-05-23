@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,9 +23,13 @@ import (
 // Store implements oasis.Store backed by PostgreSQL with pgvector.
 // Vector search uses HNSW indexes with cosine distance.
 type Store struct {
-	pool   *pgxpool.Pool
-	cfg    pgConfig
-	logger *slog.Logger
+	pool      *pgxpool.Pool
+	ownedPool bool // true when Open created the pool; Close will close it
+	cfg       pgConfig
+	logger    *slog.Logger
+
+	memoryOnce sync.Once
+	itemStore  *ItemStore
 }
 
 // pgConfig holds store configuration set via Option functions.
@@ -284,7 +289,39 @@ func (s *Store) Init(ctx context.Context) error {
 	return nil
 }
 
-// Close is a no-op. The caller owns the pool and manages its lifecycle.
+// Open creates a Store by connecting to the given DSN (a standard PostgreSQL
+// connection string or URL). The returned Store owns its connection pool and
+// will close it on Close(). Unlike New, the caller does not manage the pool.
+//
+// Open calls Init automatically so the caller can start using the store
+// immediately after the call succeeds.
+func Open(ctx context.Context, dsn string, opts ...Option) (*Store, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: open pool: %w", err)
+	}
+	s := New(pool, opts...)
+	s.ownedPool = true
+	return s, nil
+}
+
+// Close releases the connection pool when the store was created via Open.
+// When created via New (caller-owned pool), Close is a no-op.
 func (s *Store) Close() error {
+	if s.ownedPool {
+		s.pool.Close()
+	}
 	return nil
+}
+
+// Memory returns this store's ItemStore handle, which is created and initialized
+// lazily on the first call. The returned *ItemStore is safe for concurrent use.
+func (s *Store) Memory() *ItemStore {
+	s.memoryOnce.Do(func() {
+		s.itemStore = NewItemStore(s.pool, s.logger)
+		if err := s.itemStore.Init(context.Background()); err != nil {
+			s.logger.Error("postgres: init item store failed", "error", err)
+		}
+	})
+	return s.itemStore
 }

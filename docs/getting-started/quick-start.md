@@ -143,10 +143,11 @@ Make agents remember past conversations:
 ```go
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
     oasis.WithTools(searchTool),
-    oasis.WithConversationMemory(store,
-        oasis.CrossThreadSearch(embedding),  // recall from past threads
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithSemanticRecall(),  // recall from past threads + auto-extract user facts
     ),
-    oasis.WithUserMemory(memoryStore, embedding),  // learn user facts
 )
 
 // Pass thread_id to enable history

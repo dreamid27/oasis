@@ -59,7 +59,7 @@ One API key works for everything if you use Gemini.
 | Feature | Required Config | When missing |
 |---------|----------------|-------------|
 | Web search | `OASIS_BRAVE_API_KEY` | `web_search` tool not registered |
-| Long-term memory | MemoryStore passed to App | Fact extraction disabled |
+| Structured memory | Store (ItemStore) passed via `WithMemory` | Fact extraction disabled |
 | Observability | `OASIS_OBSERVER_ENABLED=true` | No traces/metrics |
 
 ## Pages

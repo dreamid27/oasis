@@ -9,3 +9,4 @@ Complete reference for all exported symbols.
 | [constructors.md](constructors.md) | Constructor functions (NewLLMAgent, NewNetwork, NewWorkflow, etc.) |
 | [options.md](options.md) | Functional options (WithTools, WithMemory, WithProcessors, etc.) |
 | [errors.md](errors.md) | Error types and handling patterns (ErrLLM, ErrHTTP, ErrHalt, etc.) |
+| [memory.md](memory.md) | `memory` package: MemoryItem, ItemStore, AgentMemory, pipelines, tools |

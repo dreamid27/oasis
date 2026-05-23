@@ -101,7 +101,7 @@ graph TD
     APP -->|Chat| CHAT[Chat LLM + Streaming]
     APP -->|Action| ACTION[Action Agent + Tools]
     APP -->|Store| DB[(SQLite / Turso)]
-    APP -->|Memory| MEM[(MemoryStore)]
+    APP -->|Memory| MEM[(ItemStore)]
     ACTION -->|schedule, search, ...| TOOLS[Tool Registry]
     APP -->|Observe| OTEL[OpenTelemetry]
 

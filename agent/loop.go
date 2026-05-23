@@ -260,7 +260,7 @@ func forceSynthesis(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan
 		state.lastThinking = resp.Thinking
 	}
 
-	cfg.mem.PersistMessages(synthCtx, cfg.name, task, task.Input, resp.Content, state.steps)
+	cfg.mem.PersistTurn(synthCtx, cfg.name, task, task.Input, resp.Content, state.steps)
 	result := AgentResult{
 		Output:       resp.Content,
 		Thinking:     state.lastThinking,

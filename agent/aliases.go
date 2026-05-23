@@ -2,7 +2,6 @@ package agent
 
 import (
 	"github.com/nevindra/oasis/core"
-	"github.com/nevindra/oasis/memory"
 	"github.com/nevindra/oasis/processor"
 	"github.com/nevindra/oasis/skills"
 )
@@ -149,14 +148,12 @@ type LLMCallTrace = core.LLMCallTrace
 type Store = core.Store
 type Message = core.Message
 type Thread = core.Thread
-type Fact = core.Fact
 type Document = core.Document
 type Chunk = core.Chunk
 type ChunkFilter = core.ChunkFilter
 type ScoredMessage = core.ScoredMessage
 type ScoredChunk = core.ScoredChunk
 type ScheduledAction = core.ScheduledAction
-type ScoredFact = core.ScoredFact
 
 // CosineSimilarity is re-exported from core for compatibility.
 var CosineSimilarity = core.CosineSimilarity
@@ -170,10 +167,6 @@ type CompactResult = core.CompactResult
 
 type ErrLLM = core.ErrLLM
 type ErrHTTP = core.ErrHTTP
-
-// --- Memory ---
-
-type MemoryStore = memory.MemoryStore
 
 // --- Skills ---
 

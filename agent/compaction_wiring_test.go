@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nevindra/oasis/history"
+	"github.com/nevindra/oasis/memory"
 )
 
 type stubCompactor struct{}
@@ -15,7 +15,7 @@ func (stubCompactor) Compact(_ context.Context, _ CompactRequest) (CompactResult
 
 func TestWithCompaction_StoresOnConfig(t *testing.T) {
 	cfg := BuildConfig([]AgentOption{
-		WithHistory(history.Compaction(stubCompactor{}, 0.75)),
+		WithMemory(memory.WithCompaction(stubCompactor{}, 0.75)),
 	})
 	if cfg.compactor == nil {
 		t.Fatal("compactor not stored on config")
@@ -27,7 +27,7 @@ func TestWithCompaction_StoresOnConfig(t *testing.T) {
 
 func TestWithCompaction_OmittedLeavesNilCompactor(t *testing.T) {
 	cfg := BuildConfig([]AgentOption{
-		WithHistory(history.MaxHistory(10)),
+		WithMemory(memory.WithMaxHistory(10)),
 	})
 	if cfg.compactor != nil {
 		t.Error("compactor should be nil when WithCompaction not used")

@@ -21,7 +21,6 @@ import (
 	"github.com/nevindra/oasis/compaction"
 	"github.com/nevindra/oasis/core"
 	"github.com/nevindra/oasis/guardrail"
-	"github.com/nevindra/oasis/history"
 	"github.com/nevindra/oasis/memory"
 	"github.com/nevindra/oasis/network"
 	"github.com/nevindra/oasis/processor"
@@ -96,12 +95,24 @@ var WithInputHandler = agent.WithInputHandler
 var WithToolResultStore = agent.WithToolResultStore
 
 // WithEmbedding sets the shared embedding provider used by memory features
-// (WithUserMemory + history.CrossThreadSearch). See agent.WithEmbedding.
+// (memory.WithSemanticRecall and similar). See agent.WithEmbedding.
 var WithEmbedding = agent.WithEmbedding
 
-// WithUserMemory enables the user-memory pipeline. Requires WithEmbedding.
-// See agent.WithUserMemory.
-var WithUserMemory = agent.WithUserMemory
+// WithMemory configures the agent's memory system. Pass memory.Option values
+// from github.com/nevindra/oasis/memory — this is the single entry point for
+// history, recall, compaction, compression, working memory, and memory tools:
+//
+//	oasis.WithMemory(
+//	    memory.WithStore(store),
+//	    memory.WithEmbedding(embedder),
+//	    memory.WithMaxHistory(20),
+//	    memory.WithSemanticRecall(),
+//	    memory.WithCompaction(compactor, 0.8),
+//	    memory.WithCompress(modelFunc, 200_000),
+//	)
+//
+// See agent.WithMemory for the full contract.
+var WithMemory = agent.WithMemory
 
 var NewInMemoryToolResultStore = core.NewInMemoryToolResultStore
 var WithToolResultMaxBytes = core.WithToolResultMaxBytes
@@ -249,23 +260,6 @@ var WithOnError = agent.WithOnError
 // WithMetadata adds static metadata to the agent.
 var WithMetadata = agent.WithMetadata
 
-// --- History ---
-
-// WithHistory enables conversation history and related context-window management.
-// Pass history.Option values from github.com/nevindra/oasis/history:
-//
-//	oasis.WithHistory(
-//	    history.Store(store),
-//	    history.MaxHistory(30),
-//	    history.CrossThreadSearch(),
-//	    history.Compaction(compactor, 0.8),
-//	    history.Compress(model, 200_000),
-//	)
-var WithHistory = agent.WithHistory
-
-// HistoryOption is an option for WithHistory. Import from github.com/nevindra/oasis/history.
-type HistoryOption = history.Option
-
 // --- Generation ---
 
 // Generation groups LLM sampling and output parameters. Pass to WithGeneration.
@@ -408,19 +402,27 @@ var WithOnFinish = workflow.WithOnFinish
 
 // --- Memory ---
 
-// MemoryStore is the interface for long-term semantic memory backed by an
-// embedding provider. Manually imported from the memory subpackage:
-//
-//	import "github.com/nevindra/oasis/memory"
-//	...
-//	agent := oasis.NewLLMAgent(name, desc, provider,
-//		oasis.WithEmbedding(embedding),
-//		oasis.WithUserMemory(memoryStore),
-//		oasis.WithHistory(history.Store(store), history.CrossThreadSearch()),
-//	)
-//
-// See github.com/nevindra/oasis/memory for the full API.
-type MemoryStore = memory.MemoryStore
+// AgentMemory is the orchestrator returned by LLMAgent.Memory(). Use it to call
+// Remember, Recall, Forget, List, Get, Pin directly from application code.
+type AgentMemory = memory.AgentMemory
+
+// MemoryItem is the universal record type for all memory layers. See
+// [memory.MemoryItem].
+type MemoryItem = memory.MemoryItem
+
+// Kind discriminates the role of a MemoryItem. See [memory.Kind].
+type Kind = memory.Kind
+
+// Scope anchors a MemoryItem to a specific instance of a ScopeKind. See
+// [memory.Scope].
+type Scope = memory.Scope
+
+// ScopeKind is the partition kind for memory visibility. See [memory.ScopeKind].
+type ScopeKind = memory.ScopeKind
+
+// ScoredItem is a MemoryItem paired with a similarity score from semantic
+// search. See [memory.ScoredItem].
+type ScoredItem = memory.ScoredItem
 
 // --- Skills ---
 
@@ -796,7 +798,6 @@ func Float64Attr(k string, v float64) SpanAttr  { return core.Float64Attr(k, v) 
 type Store = core.Store
 type Thread = core.Thread
 type Message = core.Message
-type Fact = core.Fact
 type Document = core.Document
 type Chunk = core.Chunk
 type ChunkMeta = core.ChunkMeta
@@ -807,7 +808,6 @@ type ChunkFilter = core.ChunkFilter
 type FilterOp = core.FilterOp
 type ScoredMessage = core.ScoredMessage
 type ScoredChunk = core.ScoredChunk
-type ScoredFact = core.ScoredFact
 type ScheduledAction = core.ScheduledAction
 type ScheduledToolCall = core.ScheduledToolCall
 

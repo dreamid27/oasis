@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevindra/oasis/history"
+	"github.com/nevindra/oasis/memory"
 )
 
 // ptrA is a local pointer helper for this test file (avoids import of oasis root pkg).
@@ -77,7 +77,7 @@ func TestInitCoreMemoryFieldsWired(t *testing.T) {
 	// Deep field verification is done via integration tests in memory_test.go.
 	store := &stubStore{}
 	cfg := BuildConfig([]AgentOption{
-		WithHistory(history.Store(store), history.MaxHistory(25), history.MaxTokens(5000)),
+		WithMemory(memory.WithStore(store), memory.WithMaxHistory(25), memory.WithMaxTokens(5000)),
 	})
 
 	var c AgentCore

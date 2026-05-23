@@ -5,7 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/nevindra/oasis/core"
-	"github.com/nevindra/oasis/history"
+	"github.com/nevindra/oasis/memory"
 )
 
 // Agent, StreamingAgent, AgentTask, AgentResult, StepTrace are defined in core/
@@ -28,13 +28,18 @@ type Config struct {
 	postToolProcessors []PostToolProcessor
 	inputHandler     InputHandler
 	store            Store
-	embedding        EmbeddingProvider // set by WithEmbedding; shared by WithUserMemory + history.CrossThreadSearch
-	memory           MemoryStore
-	crossThreadSearch bool    // enabled by history.CrossThreadSearch
-	semanticMinScore  float32 // set by history.MinScore
-	maxHistory        int     // set by history.MaxHistory
-	maxTokens         int     // set by history.MaxTokens (history budget)
-	autoTitle         bool    // set by history.AutoTitle
+	embedding        EmbeddingProvider // set by WithEmbedding; shared by memory.WithSemanticRecall
+	// memoryConfig is the data-only memory configuration assembled by WithMemory.
+	// We store the *config* (pure value, no sync primitives) so Config remains
+	// safe to copy. The orchestrator (memory.AgentMemory) is constructed once
+	// inside InitCore and lives on AgentCore.mem.
+	memoryConfig      memory.AgentMemoryConfig
+	memoryInitialized bool // true once WithMemory has populated memoryConfig
+	crossThreadSearch bool    // mirrored from memory.WithSemanticRecall
+	semanticMinScore  float32 // mirrored from memory.WithSemanticRecallMinScore
+	maxHistory        int     // mirrored from memory.WithMaxHistory
+	maxTokens         int     // mirrored from memory.WithMaxTokens (history budget)
+	autoTitle         bool    // mirrored from memory.WithAutoTitle
 	planExecution     bool            // enabled by WithPlanExecution option
 	sandbox           core.Sandbox    // set by WithSandbox option
 	sandboxTools      []AnyTool       // tools auto-registered by WithSandbox
@@ -47,14 +52,14 @@ type Config struct {
 	maxAttachmentBytes  int64          // set by WithMaxAttachmentBytes option
 	maxSuspendSnapshots int            // set by WithSuspendBudget
 	maxSuspendBytes     int64          // set by WithSuspendBudget
-	compressModel       ModelFunc          // set by history.Compress
-	compressThreshold   int                // set by history.Compress
-	compactor           Compactor          // set by history.Compaction (per-thread compaction)
-	compactThreshold    float64            // set by history.Compaction (0 = disabled)
+	compressModel       ModelFunc          // mirrored from memory.WithCompress
+	compressThreshold   int                // mirrored from memory.WithCompress
+	compactor           Compactor          // mirrored from memory.WithCompaction (per-thread compaction)
+	compactThreshold    float64            // mirrored from memory.WithCompaction (0 = disabled)
 	genParams           *GenerationParams  // set by WithGeneration
-	semanticTrimming    bool               // enabled by history.SemanticTrim
-	trimmingEmbedding   EmbeddingProvider  // set by history.SemanticTrim
-	keepRecent          int                // set by history.KeepRecent
+	semanticTrimming    bool               // mirrored from memory.WithSemanticTrimming
+	trimmingEmbedding   EmbeddingProvider  // mirrored from memory.WithSemanticTrimEmbedding
+	keepRecent          int                // mirrored from memory.WithKeepRecent
 	spawnEnabled      bool     // set by WithSubAgentSpawning
 	spawnDepthLimit   int      // set by MaxSpawnDepth (default 1)
 	deniedSpawnTools  []string // set by DenySpawnTools
@@ -286,45 +291,6 @@ func limitsFromConfig(c *Config) Limits {
 // not clear an earlier non-zero one.
 func WithLimits(lim Limits) AgentOption {
 	return func(c *Config) { lim.applyTo(c) }
-}
-
-// --- History ---
-
-// WithHistory enables conversation history and related context-window
-// management strategies. Pass a combination of history.Option values:
-//
-//	oasis.WithHistory(
-//	    history.Store(store),
-//	    history.MaxHistory(30),
-//	    history.CrossThreadSearch(),
-//	    history.Compaction(c, 0.8),
-//	    history.Compress(model, 200_000),
-//	)
-//
-// Features that need an embedding provider (CrossThreadSearch, WithUserMemory)
-// pull from WithEmbedding. Without WithEmbedding, those features silently no-op.
-// Without history.Store, only per-turn options (Compress) take effect;
-// per-thread mechanisms (Compaction, SemanticTrim, AutoTitle,
-// CrossThreadSearch) silently no-op.
-func WithHistory(opts ...history.Option) AgentOption {
-	return func(c *Config) {
-		cfg := history.Build(opts)
-		c.store = cfg.Store
-		c.maxHistory = cfg.MaxHistory
-		c.maxTokens = cfg.MaxTokens
-		c.autoTitle = cfg.AutoTitle
-		c.crossThreadSearch = cfg.CrossThreadSearch
-		c.semanticMinScore = cfg.MinScore
-		c.compactor = cfg.Compactor
-		c.compactThreshold = cfg.CompactThreshold
-		c.semanticTrimming = cfg.SemanticTrimming
-		if cfg.TrimmingEmbedding != nil {
-			c.trimmingEmbedding = cfg.TrimmingEmbedding
-		}
-		c.keepRecent = cfg.KeepRecent
-		c.compressModel = cfg.CompressModel
-		c.compressThreshold = cfg.CompressThreshold
-	}
 }
 
 // --- Generation ---
@@ -581,32 +547,75 @@ func WithOnError(fn OnError) AgentOption {
 }
 
 // WithEmbedding sets the embedding provider used by memory features that
-// need vector search. Required by WithUserMemory and history.CrossThreadSearch
-// — both share this single provider so their queries land in the same vector
-// space. Without WithEmbedding, those features silently no-op (with a warning
-// logged at construction time).
-//
-// history.SemanticTrim takes its own embedding parameter and is independent
-// of this option — a separate (often smaller/faster) model can be used for
-// trimming without affecting cross-thread or user-memory recall.
+// need vector search. Pulled into the memory orchestrator when WithMemory is
+// not explicitly configured. For new code, prefer passing the embedding
+// directly via memory.WithEmbedding inside oasis.WithMemory(...).
 func WithEmbedding(e EmbeddingProvider) AgentOption {
 	return func(c *Config) { c.embedding = e }
 }
 
-// WithUserMemory enables the full user memory pipeline: read + write.
+// WithMemory configures the agent's memory system. Pass memory.Option values
+// from github.com/nevindra/oasis/memory to wire the store, embedding provider,
+// pipelines, history budgets, compaction/compression policy, and agent-callable
+// tools:
 //
-// Read (every Execute call): embeds the input, retrieves relevant facts via
-// BuildContext, and appends them to the system prompt.
+//	oasis.WithMemory(
+//	    memory.WithStore(store),
+//	    memory.WithEmbedding(embedder),
+//	    memory.WithMaxHistory(20),
+//	    memory.WithMaxTokens(8000),
+//	    memory.WithSemanticRecall(),
+//	    memory.WithAutoTitle(),
+//	    memory.WithCompaction(compactor, 0.8),
+//	    memory.WithCompress(modelFunc, 200_000),
+//	    memory.WithTools(mem.AllTools()...),
+//	)
 //
-// Write (after each turn, background): uses the agent's own LLM to extract
-// durable user facts from the conversation exchange and persists them via
-// UpsertFact. Write requires WithHistory(history.Store(...)) — without it,
-// extraction is silently skipped (logged as a warning at construction time).
+// The orchestrator handles BuildMessages (read path) and PersistTurn (write
+// path). Both are no-ops if WithMemory is not called (no store configured),
+// so the agent loop is safe either way.
 //
-// Requires WithEmbedding. Without an embedding provider, the feature is
-// silently disabled (warning logged at construction time).
-func WithUserMemory(m MemoryStore) AgentOption {
-	return func(c *Config) { c.memory = m }
+// Runtime knobs that the agent loop reads (compactor/compress thresholds,
+// semanticTrimming, etc.) are also mirrored onto Config so the existing
+// loop wiring works without per-knob lookups into AgentMemoryConfig.
+//
+// Any tools registered via memory.WithTools(...) are added to the agent's
+// tool registry so the LLM can call Remember/Recall/Forget/Pin.
+func WithMemory(opts ...memory.Option) AgentOption {
+	return func(c *Config) {
+		cfg := memory.BuildConfig(opts...)
+		c.memoryConfig = cfg
+		c.memoryInitialized = true
+		c.tools = append(c.tools, cfg.Tools...)
+
+		// Mirror runtime-relevant memory knobs onto Config so the agent loop's
+		// existing field reads (cfg.compactor, cfg.compressThreshold, etc.)
+		// keep working without an extra hop through AgentMemoryConfig.
+		c.maxHistory = cfg.MaxHistory
+		c.maxTokens = cfg.MaxTokens
+		c.autoTitle = cfg.AutoTitle
+		c.crossThreadSearch = cfg.SemanticRecall
+		c.semanticMinScore = cfg.SemanticMinScore
+		c.semanticTrimming = cfg.SemanticTrimming
+		if cfg.TrimmingEmbedding != nil {
+			c.trimmingEmbedding = cfg.TrimmingEmbedding
+		}
+		c.keepRecent = cfg.KeepRecent
+		c.compactor = cfg.Compactor
+		c.compactThreshold = cfg.CompactThreshold
+		c.compressModel = cfg.CompressModel
+		c.compressThreshold = cfg.CompressThreshold
+		// Mirror the core.Store half of memory.Store onto Config so legacy
+		// consumers reading c.store still see the configured store.
+		if cfg.Store != nil {
+			c.store = cfg.Store
+		}
+		// Mirror embedding when WithMemory provides one (otherwise WithEmbedding
+		// continues to be the source of truth).
+		if cfg.Embedding != nil {
+			c.embedding = cfg.Embedding
+		}
+	}
 }
 
 
@@ -668,14 +677,8 @@ func BuildConfig(opts []AgentOption) *Config {
 		c.logger = nopLogger
 	}
 	// Warn about misconfigurations that can't be caught at compile time.
-	if c.memory != nil && c.store == nil {
-		c.logger.Warn("WithUserMemory without history.Store — fact extraction (write) will be silently skipped")
-	}
-	if c.memory != nil && c.embedding == nil {
-		c.logger.Warn("WithUserMemory without WithEmbedding — user memory feature will be silently disabled")
-	}
 	if c.crossThreadSearch && c.embedding == nil {
-		c.logger.Warn("history.CrossThreadSearch without WithEmbedding — cross-thread search will be silently disabled")
+		c.logger.Warn("memory.WithSemanticRecall without an embedding provider — cross-thread search will be silently disabled")
 	}
 	// Apply defaults for configurable runtime limits.
 	if c.maxParallelDispatch == 0 {

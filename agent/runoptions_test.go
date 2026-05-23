@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nevindra/oasis/history"
 	"github.com/nevindra/oasis/memory"
 )
 
@@ -144,7 +143,7 @@ func TestRunOptions_MemoryOverride_PerCall(t *testing.T) {
 	})
 
 	a := NewLLMAgent("a", "d", &capturedRequestProvider{},
-		WithHistory(history.Store(defaultStore)),
+		WithMemory(memory.WithStore(defaultStore)),
 	)
 
 	_, err := a.ExecuteWith(context.Background(),

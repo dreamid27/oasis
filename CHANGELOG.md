@@ -276,10 +276,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
   between the two. Migration hint: `grep -n 'State().IsTerminal'
   your-project/` and add `Sync()` calls.
 
-- **BREAKING — Conflicting embedding providers panic at build time.**
-  `WithUserMemory(em1, ...)` and `WithHistory(history.CrossThreadSearch(em2, ...))`
-  with non-equal embeddings now panic from `BuildConfig`. Pass the same
-  `EmbeddingProvider` to both, or pick one.
+- **BREAKING — `oasis.WithHistory` and the `github.com/nevindra/oasis/history`
+  subpackage are removed.** All history, recall, compaction, compression, and
+  semantic-trim options now live on `memory.Option` and are passed through the
+  single `oasis.WithMemory(...)` entry point. See the "Memory system redesign"
+  entry below for the full migration.
 
 - **BREAKING — `WithSandbox(any)` is now `WithSandbox(core.Sandbox)`.**
   The `sandbox/` subpackage's existing type already implements the new
@@ -529,6 +530,40 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
       }),
   )
   ```
+
+- **Memory system redesign (BREAKING).** Replaced both `WithUserMemory(...)` and `WithHistory(...)` with a single `oasis.WithMemory(...)` entry point. All persistent memory now uses a unified `MemoryItem` type (facts, working memory, events, playbooks, reflections, summaries — discriminated by `Kind`), and all history/compaction/compression knobs are `memory.Option` values.
+  - Removed: `oasis.WithUserMemory`, `oasis.MemoryStore`, `core.Fact`, `core.ScoredFact`.
+  - Removed: `oasis.WithHistory`, `oasis.HistoryOption`, and the entire `github.com/nevindra/oasis/history` subpackage (`history.Store`, `history.MaxHistory`, `history.MaxTokens`, `history.AutoTitle`, `history.CrossThreadSearch`, `history.MinScore`, `history.Compaction`, `history.SemanticTrim`, `history.KeepRecent`, `history.Compress`, `history.Config`, `history.Option`, `history.Build`).
+  - Added: `oasis.WithMemory` + `memory` package with `MemoryItem`, `ItemStore`, `Filter`, ingest/retrieve pipelines, `Remember`/`Recall`/`Forget`/`Pin` developer methods, and opt-in agent-callable tools via `memory.WithTools(...)`.
+  - Added: `memory.WithCompaction(compactor, threshold)`, `memory.WithCompress(modelFunc, threshold)`, `memory.WithSemanticTrimEmbedding(e)`, `memory.WithKeepRecent(n)` — the former `history.*` options as `memory.Option` values.
+  - **Migration:** drop your existing `user_facts` table. Combine both old option families into a single `WithMemory` call:
+    ```go
+    // Before
+    oasis.WithUserMemory(store, emb)
+    oasis.WithHistory(
+        history.Store(store),
+        history.MaxHistory(30),
+        history.CrossThreadSearch(),
+        history.MinScore(0.6),
+        history.Compaction(compactor, 0.8),
+        history.Compress(modelFunc, 200_000),
+        history.SemanticTrim(emb),
+    )
+
+    // After
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(emb),
+        memory.WithMaxHistory(30),
+        memory.WithSemanticRecall(),
+        memory.WithSemanticRecallMinScore(0.6),
+        memory.WithCompaction(compactor, 0.8),
+        memory.WithCompress(modelFunc, 200_000),
+        memory.WithSemanticTrimming(),
+        memory.WithSemanticTrimEmbedding(emb), // optional: smaller model for trimming
+    )
+    ```
+- Satellite stores (`store/sqlite`, `store/postgres`): dropped `user_facts` table; added `memory_items` table. Existing fact data is **not** auto-migrated (pre-v1 hard cut).
 
 ## [0.16.0] - 2026-04-19
 

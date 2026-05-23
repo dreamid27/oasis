@@ -117,7 +117,7 @@ sequenceDiagram
 
     App->>Agent: Execute(task)
     Agent->>S: Load conversation history
-    Agent->>S: Load user facts
+    Agent->>S: Recall memory items (facts, notes, etc.)
     Agent->>LLM: Chat(messages + tools)
 
     loop Tool-calling loop
@@ -129,7 +129,7 @@ sequenceDiagram
 
     LLM-->>Agent: Final response
     Agent->>S: Persist history (background)
-    Agent->>S: Extract user facts (background)
+    Agent->>S: Ingest memory items (background)
     Agent-->>App: AgentResult
 ```
 
@@ -219,8 +219,8 @@ graph TB
         SEM["Semantic Recall<br/><small>cosine similarity filtering</small>"]
     end
 
-    subgraph "Per-User"
-        FACTS["User Facts<br/><small>auto-extracted · confidence decay<br/>semantic dedup · supersession</small>"]
+    subgraph "Structured Memory"
+        FACTS["MemoryItem Store<br/><small>facts · notes · events · playbooks<br/>auto-extracted · dedup · retrieval</small>"]
     end
 
     subgraph "Knowledge Base"
@@ -243,9 +243,9 @@ graph TB
 
 | Feature | Setup | Docs |
 | ------- | ----- | ---- |
-| **Conversation memory** | `WithConversationMemory(store)` | [Memory guide](guides/memory-and-recall.md) |
-| **Cross-thread recall** | `WithEmbedding(emb), WithConversationMemory(store, CrossThreadSearch())` | [Memory guide](guides/memory-and-recall.md) |
-| **User memory** | `WithEmbedding(emb), WithUserMemory(memStore)` | [Memory guide](guides/memory-and-recall.md) |
+| **Conversation history** | `WithMemory(memory.WithStore(store), memory.WithMaxHistory(30))` | [Memory guide](guides/memory-and-recall.md) |
+| **Cross-thread recall** | `WithMemory(memory.WithStore(store), memory.WithEmbedding(emb), memory.WithSemanticRecall())` | [Memory guide](guides/memory-and-recall.md) |
+| **Structured memory** | `WithMemory(memory.WithStore(store), memory.WithEmbedding(emb))` | [Memory guide](guides/memory-and-recall.md) |
 | **Graph RAG** | `WithGraphExtraction(provider)` on Ingestor + `GraphRetriever` | [RAG pipeline](guides/rag-pipeline.md) |
 | **Hybrid retrieval** | `HybridRetriever` with `WithReranker`, `WithFilters` | [RAG pipeline](guides/rag-pipeline.md) |
 | **Skills** | `tools/skill` with `Store` | [Skills guide](guides/skills.md) |
@@ -370,9 +370,11 @@ Optional: `BatchProvider` and `BatchEmbeddingProvider` for async batch processin
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
     oasis.WithTools(searchTool, knowledgeTool),
     oasis.WithPrompt("You are a helpful assistant."),
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store, oasis.CrossThreadSearch()),
-    oasis.WithUserMemory(memoryStore),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithSemanticRecall(),
+    ),
     oasis.WithSandbox(sb, sandbox.Tools(sb)...),
     oasis.WithPlanExecution(),
     oasis.WithTracer(observer.NewTracer()),

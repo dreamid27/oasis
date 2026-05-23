@@ -1,399 +1,265 @@
 # Memory
 
-Oasis agents are stateless by default. Memory features are opt-in — enable them to give agents conversation history, cross-thread recall, and long-term user understanding.
+Oasis agents are stateless by default. The memory system is opt-in — enable it to give agents structured long-term memory for facts, notes, events, playbooks, reflections, and summaries. Conversation history, cross-thread recall, semantic trimming, compaction, and per-turn compression are all configured through the same `WithMemory` entry point (see [below](#conversation-history-and-withmemory)).
 
-## Memory Architecture
+## What the Redesign Solves
 
-```mermaid
-graph TB
-    subgraph "Agent Memory (per Execute call)"
-        CONV[Conversation Memory<br>WithConversationMemory]
-        TRIM[Semantic Trimming<br>WithSemanticTrimming]
-        CROSS[Cross-Thread Search<br>CrossThreadSearch]
-        USER[User Memory<br>WithUserMemory]
-    end
+The old `WithUserMemory` / `MemoryStore` / `core.Fact` API was narrowly scoped to user facts with a fixed confidence model. The redesign replaces it with a single `MemoryItem` type discriminated by `Kind` — one store, one pipeline, one retrieval path — covering every memory category an agent might need. The ingest and retrieve pipelines are composable: you slot in processors (extraction, deduplication, embedder, upserter, decay) rather than inheriting a fixed behaviour. Agent-callable memory tools (`memory.remember`, `memory.recall`, `memory.forget`, `memory.pin`) are opt-in, so agents only get memory access when you explicitly wire it.
 
-    CONV -->|"load/persist"| STORE[(Store)]
-    TRIM -->|"score by relevance"| EMB[EmbeddingProvider]
-    CROSS -->|"vector search"| STORE
-    USER -->|"read facts"| MEM[(MemoryStore)]
-    USER -->|"write facts"| MEM
-    CROSS -->|"embed query"| EMB
-    USER -->|"embed facts"| EMB
-
-    style CONV fill:#e1f5fe
-    style TRIM fill:#e1f5fe
-    style CROSS fill:#e1f5fe
-    style USER fill:#fff3e0
-```
-
-## Three Memory Layers
-
-### 1. Conversation Memory
-
-Loads recent messages before the LLM call, persists the exchange afterward. By default, the last 10 messages are loaded.
+## The `MemoryItem` Shape
 
 ```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store),
-)
-
-// Custom history limit
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.MaxHistory(30)),
-)
-
-// Token budget — trim history oldest-first to fit within N estimated tokens
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.MaxTokens(4000)),
-)
-
-// Both limits compose — whichever triggers first wins
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.MaxHistory(50), oasis.MaxTokens(4000)),
-)
-
-// Semantic trimming — drop lowest-relevance messages instead of oldest
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.WithSemanticTrimming(embedding, oasis.KeepRecent(5)),
-    ),
-)
-```
-
-Activated when `task.TaskThreadID()` returns a non-empty value. Without a thread ID, the agent runs stateless.
-
-#### Semantic Trimming
-
-By default, when history exceeds `MaxTokens`, the oldest messages are dropped first. With `WithSemanticTrimming`, messages are instead scored by cosine similarity to the current user query — lowest-relevance messages are dropped first, preserving the most contextually important history.
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.WithSemanticTrimming(embedding),
-    ),
-)
-```
-
-Key behaviors:
-
-- **Keep recent** — the most recent N messages (default 3, configurable via `KeepRecent(n)`) are always preserved regardless of relevance score
-- **Graceful fallback** — if the embedding call fails, trimming silently falls back to oldest-first (log warning, don't crash)
-- **Embedding reuse** — when `CrossThreadSearch` is also enabled, the user query embedding is computed once and reused for both cross-thread search and semantic trimming — no extra API call
-
-### 2. Cross-Thread Search
-
-Embeds the user's input and searches all stored messages for semantically similar content from other threads. Requires an EmbeddingProvider.
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store,
-        oasis.CrossThreadSearch(embedding),
-    ),
-)
-
-// Custom similarity threshold (default: 0.60)
-oasis.CrossThreadSearch(embedding, oasis.MinScore(0.7))
-```
-
-Messages below the minimum score are silently dropped.
-
-Recalled messages are labeled as user-generated context with explicit trust framing to reduce prompt injection risk. When a `chat_id` is present in the task context, recall is scoped to threads belonging to the same chat, preventing cross-user contamination in multi-tenant deployments.
-
-## History Shrinking Strategies
-
-Oasis offers three independent mechanisms for keeping conversation history under control. They cascade — each runs when its own threshold is exceeded, in increasing order of cost:
-
-| Stage | Mechanism | Trigger | Effect |
-|---|---|---|---|
-| 1 | Semantic trimming (`WithSemanticTrimming`) | `MaxTokens` exceeded | Drops semantically distant messages first (cosine similarity to current query) |
-| 2 | Tool-result compression (`WithCompressThreshold` + `compressModel`) | Per-turn rune count > threshold | Summarizes old tool-result messages via the configured Compactor with `ScopeToolResultsOnly` |
-| 3 | Full-thread compaction (`WithCompactor` + `compactThreshold`) | Thread-level rune count > threshold | Summarizes the whole conversation via the configured Compactor with `ScopeFull` |
-
-You can enable any combination. They are layered, not alternatives — Stage 1 culls before Stage 2 summarizes; Stage 3 is the heaviest fallback.
-
-Internally, Stages 2 and 3 both dispatch to the `Compactor` interface (`core.Compactor`). The default `inlineCompactor` handles both `ScopeFull` and `ScopeToolResultsOnly`. Custom Compactors can implement domain-specific summarization, localization, or per-agent customization by switching on `req.Scope`.
-
-### Auto-Title Generation
-
-When enabled, the agent generates a thread title from the first conversation turn using the agent's own LLM:
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.AutoTitle()),
-)
-```
-
-The title is generated in a background goroutine after the first exchange and stored via `Store.UpdateThread`. Subsequent turns do not regenerate the title.
-
-### 3. User Memory
-
-Long-term semantic memory for user facts. Two paths:
-
-**Read path** (every call): embeds input, retrieves relevant facts via `BuildContext`, injects into system prompt.
-
-**Write path** (background, after each turn): uses the agent's own LLM to extract durable facts from the conversation and persists them via `UpsertFact`.
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store),
-    oasis.WithUserMemory(memoryStore, embedding),
-)
-```
-
-Write requires `WithConversationMemory` — without it, extraction is silently skipped.
-
-## MemoryStore Interface
-
-**File:** `memory.go`
-
-```go
-type MemoryStore interface {
-    UpsertFact(ctx context.Context, fact, category string, embedding []float32) error
-    SearchFacts(ctx context.Context, embedding []float32, topK int) ([]ScoredFact, error)
-    BuildContext(ctx context.Context, queryEmbedding []float32) (string, error)
-    DeleteFact(ctx context.Context, factID string) error
-    // pattern is treated as a plain substring — implementations use SQL LIKE
-    // internally with %pattern% wrapping, but never regex or wildcards.
-    DeleteMatchingFacts(ctx context.Context, pattern string) error
-    DecayOldFacts(ctx context.Context) error
-    Init(ctx context.Context) error
+type MemoryItem struct {
+    ID        string
+    Kind      Kind      // discriminator (see table below)
+    Content   string    // canonical text — used for embedding, display, LLM consumption
+    Scope     Scope     // visibility partition (see Scope section)
+    Source    Source    // provenance — where this item came from
+    Pinned    bool      // pinned items are always loaded into context
+    Tags      []string  // arbitrary labels for filtering
+    Embedding []float32 // backfilled by Embedder ingest processor when absent
+    CreatedAt int64     // unix seconds
+    UpdatedAt int64
+    ExpiresAt int64     // 0 = never
 }
 ```
 
-`SearchFacts` and `BuildContext` automatically filter to facts with **confidence >= 0.3** — low-confidence facts are excluded from results.
+### Kind
 
-**Shipped implementations:** `store/sqlite` (`sqlite.NewMemoryStore(store.DB())`), `store/postgres` (`postgres.NewMemoryStore(pool)`)
+`Kind` is an open string type — the framework defines six canonical values, but you can define your own (e.g. `"decision"`, `"hypothesis"`, `"todo-event"`):
 
-## Confidence System
+| Kind | Constant | Purpose |
+|------|----------|---------|
+| `fact` | `memory.KindFact` | Semantic fact about the user or world |
+| `note` | `memory.KindNote` | Working memory scratchpad |
+| `event` | `memory.KindEvent` | Episodic event (happened at a specific time) |
+| `playbook` | `memory.KindPlaybook` | Procedural memory ("when X, do Y") |
+| `reflection` | `memory.KindReflection` | Agent self-critique |
+| `summary` | `memory.KindSummary` | Hierarchical compaction summary |
 
-Facts have a confidence score that changes over time:
+## Scope
 
-```mermaid
-graph LR
-    NEW[New fact<br>confidence = 1.0] --> REINFORCE{Reinforced?}
-    REINFORCE -->|Yes| BOOST["+0.1<br>(capped at 1.0)"]
-    REINFORCE -->|No, 7+ days| DECAY["x 0.95"]
-    DECAY --> CHECK{confidence < 0.3<br>AND age > 30 days?}
-    CHECK -->|Yes| PRUNE[Pruned]
-    CHECK -->|No| REINFORCE
-```
-
-- **New facts** start at `confidence = 1.0`
-- **Re-extracted facts** get `+0.1` (capped at 1.0)
-- **Decay**: `confidence *= 0.95` for facts not reinforced in 7+ days
-- **Pruning**: facts with `confidence < 0.3` and `age > 30 days` are removed
-- `DecayOldFacts` runs probabilistically (~5% per conversation turn)
-
-## Auto-Extraction Pipeline
-
-When `WithUserMemory` is set, the agent automatically extracts user facts after each conversation turn:
-
-```mermaid
-flowchart TD
-    MSG[Conversation turn] --> TRIVIAL{Trivial message?}
-    TRIVIAL -->|"'ok', 'thanks', 'wkwk'"| SKIP([Skip])
-    TRIVIAL -->|No| EXTRACT[LLM extracts facts + categories]
-    EXTRACT --> SUPERSEDE{Contradicts existing fact?}
-    SUPERSEDE -->|Yes| DELETE[Find old fact by semantic search<br>cosine >= 0.80, delete it]
-    SUPERSEDE -->|No| UPSERT
-    DELETE --> UPSERT[Embed + upsert<br>dedup at cosine > 0.85]
-    UPSERT --> DECAY[DecayOldFacts<br>~5% probability]
-```
-
-This runs in a background goroutine using the agent's own LLM. No extra configuration needed. Extraction is capped at **10 facts per turn** to prevent overwhelming the store.
-
-### Token Estimation
-
-`MaxTokens` uses a heuristic: ~4 characters per token, plus 4 tokens overhead per message. This is approximate — actual token counts vary by model and content.
-
-### Fact Validation
-
-Extracted facts are validated before persistence:
-
-- **Category check** — only `personal`, `preference`, `work`, `habit`, and `relationship` are accepted. Facts with other categories are dropped.
-- **Length limit** — facts are truncated to 200 runes to prevent bloated system prompts.
-- **Empty check** — facts with empty text are dropped.
-- **Injection pattern filter** — facts containing known prompt injection markers (role markers like `[SYSTEM]`, ChatML tokens, instruction overrides like "ignore previous") are silently dropped. This is a narrow, high-confidence heuristic — the extraction LLM prompt also includes anti-injection guardrails.
-
-These validations prevent malicious content from being persisted into the memory store and injected into future system prompts via the extraction pipeline.
-
-### Backpressure and Graceful Shutdown
-
-Background persist goroutines are bounded by a semaphore (cap 16). When the store or embedding provider is slow and all slots are occupied, the persist pipeline degrades gracefully:
-
-1. **Lightweight persist (first fallback)** — skips embedding, fact extraction, and title generation. Only writes the user and assistant messages to the database. Conversation history is preserved; cross-thread search quality degrades temporarily. Waits up to 30 seconds for a semaphore slot — generous enough to survive slow embedding providers (typical calls run 5-15s), so normal backpressure does not drop messages.
-2. **Drop (last resort)** — if no slot becomes available within the 30-second window, the persist is dropped with an Error-level log. This only happens when the store itself is unresponsive.
-
-This two-tier approach prevents silent data loss under normal backpressure (slow embedding API) while still bounding goroutine growth when the store is truly overloaded.
-
-Call `Drain()` on the agent or network during shutdown to wait for in-flight persist goroutines to finish:
+`Scope` anchors a `MemoryItem` to a visibility partition:
 
 ```go
-agent.Drain() // blocks until all background persists complete
+type Scope struct {
+    Kind ScopeKind
+    Ref  string   // the specific instance (user ID, thread ID, agent name, etc.)
+}
+
+// Shorthand constructor:
+memory.Scoped(memory.ScopeResource, "user_123")
 ```
 
-## Context Compression
+| `ScopeKind` | Constant | When to use |
+|-------------|----------|-------------|
+| `thread` | `memory.ScopeThread` | Visible only within one conversation thread |
+| `resource` | `memory.ScopeResource` | Visible across all threads of one user or chat |
+| `agent` | `memory.ScopeAgent` | Visible across all users for this agent |
+| `global` | `memory.ScopeGlobal` | Visible to every agent |
 
-**Disabled by default.** Enable per-turn compression by passing `WithCompressThreshold(n)` with a positive value. When the total message rune count exceeds `n`, the agent compresses older tool results via an LLM call:
+The default scope when not specified is `ScopeResource` with an empty `Ref` (the framework fills the Ref from the task's user/chat context when available).
+
+## Provenance via Source
+
+`Source` records where a `MemoryItem` came from. This powers "where did I learn this?" queries and bulk deletion by source:
 
 ```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store),
-    oasis.WithCompressThreshold(150_000),                  // opt-in, triggers at 150K runes
-    oasis.WithCompressModel(func() oasis.Provider { ... }), // use a cheaper model
+type Source struct {
+    Kind    string // "message" | "tool" | "user" | "agent" | "extraction"
+    Ref     string // foreign key (message ID, tool call ID, etc.) — may be empty
+    AgentID string // which agent created or extracted this
+}
+```
+
+## The Two Pipelines
+
+Memory flows through two composable pipelines: **ingest** (write path) and **retrieve** (read path). Each pipeline is a slice of processors that run in order.
+
+### Ingest Pipeline
+
+Runs in the background after each agent turn. Default chain (in order):
+
+1. `EnsureThread` — creates the thread row if it doesn't exist
+2. `PersistMessages` — writes user + assistant messages to the conversation store
+3. `FactExtractor` — uses the agent's LLM to extract `KindFact` items from the conversation turn (skipped when no LLM provider is configured)
+4. `Deduper` — finds semantically similar existing facts and merges them (cosine > 0.85 = reinforce, 0.80 = supersedes)
+5. `Embedder` — backfills missing embeddings (skipped when no embedding provider)
+6. `Upserter` — writes items to the `ItemStore`
+7. `TitleGenerator` — generates a thread title on the first turn (when `WithAutoTitle()` is set and an LLM provider is configured)
+8. `DecayProbabilistic` — runs decay (~5% probability per turn)
+9. User-appended processors (from `memory.WithIngestProcessors(...)`)
+
+### Retrieve Pipeline
+
+Runs synchronously before each LLM call. Default chain:
+
+1. Fetch pinned items (always included)
+2. Semantic search for items matching the current query (`BatchedRecall`)
+3. Fetch the working-memory slot (when `WithWorkingMemory()` is enabled)
+4. User-appended processors (from `memory.WithRetrieveProcessors(...)`)
+
+## Default Behavior (Passive Auto-Extract)
+
+By default, `WithMemory` auto-extracts `KindFact` items from each conversation turn — no extra configuration needed. The agent's own LLM identifies durable facts and persists them to the `ItemStore`. Retrieval is also automatic: before each LLM call, the most semantically relevant items are injected into the system prompt.
+
+```go
+import (
+    oasis "github.com/nevindra/oasis"
+    "github.com/nevindra/oasis/memory"
+    "github.com/nevindra/oasis/store/sqlite"
+    "github.com/nevindra/oasis/provider/gemini"
 )
-```
 
-```mermaid
-flowchart LR
-    CHECK{Rune count > threshold?} -->|Yes| SCAN["Walk backwards through messages<br>find iteration boundaries"]
-    SCAN --> PRESERVE["Preserve last 2 iterations"]
-    PRESERVE --> SUMMARIZE["LLM summarizes older messages"]
-    SUMMARIZE --> REPLACE["Replace old messages with summary"]
-    CHECK -->|No| CONTINUE["Continue normally"]
-```
+store := sqlite.New("oasis.db")
+store.Init(ctx)
 
-**Key behaviors:**
-- Last 2 tool-calling iterations are always preserved (never compressed)
-- Prior summaries from earlier compression passes are re-compressed (avoiding summary explosion)
-- Summaries are prefixed with `"[Summary of earlier tool results]\n"`
-- If no messages qualify for compression, it's skipped silently
-- On compression failure, the agent continues uncompressed (graceful degradation)
+embedding := gemini.NewEmbedding("key", "gemini-embedding-001", 1536)
 
-For long-running chat threads, see the [Per-Thread Compaction](#per-thread-compaction) section below — that's the preferred strategy now.
-
-## Per-Thread Compaction
-
-A one-shot LLM summarization of an entire thread into a structured 9-section format, triggered when the conversation approaches the model's context window. Unlike per-turn compression — which only rewrites old tool results inside a single `Execute` call — per-thread compaction produces a durable summary that survives across turns.
-
-Wire it via `WithConversationMemory`:
-
-```go
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store,
-        oasis.WithCompaction(oasis.NewStructuredCompactor(summarizer), 0.80),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
     ),
 )
 ```
 
-The threshold (`0.80` above) is a fraction of the effective context window. When estimated tokens cross it, the Compactor runs against the loaded history.
+The agent now automatically extracts facts from conversations and recalls relevant ones before each response. No other configuration is required for basic use.
 
-### Default 9 Sections
+## Unified memory configuration
 
-`StructuredCompactor` asks the summarizer to produce a `<summary>` block with these numbered sections:
-
-1. Primary Request and Intent
-2. Key Technical Concepts
-3. Files and Artifacts
-4. Errors and Fixes
-5. Problem Solving
-6. All User Messages
-7. Pending Tasks
-8. Current Work
-9. Optional Next Step
-
-### Extending the Prompt
-
-Append domain-specific sections via `ExtraSections` on a custom `CompactRequest` (or by wrapping `StructuredCompactor` in a Compactor that sets them):
-
-```go
-extras := []oasis.CompactSection{
-    {Title: "Active Skills", Instructions: "List every skill loaded during this thread, verbatim name."},
-}
-```
-
-### Focus Hints and Re-Compaction
-
-`CompactRequest.FocusHint` is a free-form string injected as a preservation directive — the summarizer biases toward keeping material matching the hint ("focus on layout decisions"). `CompactRequest.IsRecompact = true` signals that the input already contains a prior compact; the prompt then instructs the model to preserve the prior summary by reference and only summarize NEW progress, preventing summary explosion across repeated compactions.
-
-See [`concepts/compaction.md`](compaction.md) for the deep dive — interface shape, helpers, prompt construction, and when to skip the framework's auto-trigger.
-
-## Failure Modes
-
-The memory load path runs inside every turn and must never take the agent down with it. Two explicit degradations:
-
-- **History load failure** — when `Store.GetMessages` returns an error, the turn drops compaction and cross-thread recall for that request and proceeds with `[system-prompt, user-input]` only. Running those features on empty history would inject a prior-conversation summary or a "recalled from past conversations" block without the local history they are meant to reference. The error is logged at `ERROR` level; the turn itself is not failed.
-- **Adjacent system messages are merged** — the base system prompt, the `[Prior conversation summary]` system message emitted by compaction, and the cross-thread recall block are each `role:"system"`. Consecutive system messages are rejected outright by some providers (Anthropic) and are structurally questionable for others. `buildMessages` merges any run of adjacent system messages into a single block joined by a blank line before returning.
-
-## Message Truncation Limits
-
-Two distinct truncation limits protect against unbounded growth:
-
-| Limit | Value | Purpose |
-|-------|-------|---------|
-| **Persist content** | 50,000 runes | Max content length when writing messages to the database |
-| **Recall content** | 500 runes | Max content length for cross-thread recalled messages injected into prompts |
-
-The persist limit prevents large tool results from bloating the database. The recall limit keeps injected context compact and reduces prompt injection surface from recalled content.
-
-## Semantic Deduplication
-
-`UpsertFact` checks for semantically similar existing facts (cosine similarity > 0.85). If found, the existing fact is reinforced (+0.1 confidence, capped at 1.0) rather than creating a duplicate.
-
-### Two Similarity Thresholds
-
-The auto-extraction pipeline uses two different thresholds for semantic matching:
-
-| Threshold | Value | Purpose |
-|-----------|-------|---------|
-| **Supersedes** | 0.80 | When a new fact contradicts an existing one (lower because supersedes targets facts that are semantically similar but factually different) |
-| **Dedup** | 0.85 | When a new fact is essentially the same as an existing one (higher to avoid false merges) |
-
-## Memory Wiring Example
-
-Full setup with all three memory layers:
+`WithMemory` is the single entry point for every memory feature. Conversation history, cross-thread recall, compaction, semantic trimming, auto-titling, and structured `MemoryItem` storage all share one option list:
 
 ```go
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithTools(searchTool),
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.CrossThreadSearch(embedding, oasis.MinScore(0.7)),
-        oasis.WithSemanticTrimming(embedding),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithMaxHistory(30),
+        memory.WithSemanticRecall(),
+        memory.WithCompaction(compactor, 0.80),
+        memory.WithRecallKinds(memory.KindFact, memory.KindPlaybook),
     ),
-    oasis.WithUserMemory(memoryStore, embedding),
+)
+```
+
+`WithMemory` owns: conversation-history loading and persistence, cross-thread message recall, semantic trimming, per-thread compaction, per-turn compression, thread title generation, `MemoryItem` ingest (fact extraction, deduplication, embedder), `MemoryItem` retrieval (pinned items, semantic recall, working memory), and agent-callable memory tools.
+
+See [concepts/compaction.md](compaction.md) for the full compaction deep-dive.
+
+## Opting into Agent-Callable Tools
+
+By default the agent cannot read or write memory on its own. Enable it explicitly:
+
+```go
+var mem memory.AgentMemory
+mem.Init(memory.BuildConfig(
+    memory.WithStore(store),
+    memory.WithEmbedding(embedding),
+))
+
+agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithTools(mem.AllTools()...),
+    ),
+)
+```
+
+The four tools the agent can then call:
+
+| Tool name | What it does |
+|-----------|-------------|
+| `memory.remember` | Save a new `MemoryItem` (content, kind, scope, tags, pinned) |
+| `memory.recall` | Semantic search over stored items (query, kind, scope, k) |
+| `memory.forget` | Delete items by ID, substring match, kind, or age |
+| `memory.pin` | Pin or unpin an item (pinned items are always loaded into context) |
+
+## Developer API
+
+`AgentMemory` also exposes a direct Go API for use outside the agent loop:
+
+```go
+// Remember — persist a single MemoryItem (embedding backfilled if empty)
+err := mem.Remember(ctx, memory.MemoryItem{
+    Kind:    memory.KindFact,
+    Content: "User's favorite language is Go",
+    Scope:   memory.Scoped(memory.ScopeResource, "user_123"),
+})
+
+// Recall — semantic search
+items, err := mem.Recall(ctx, "programming preferences",
+    memory.RecallKind(memory.KindFact),
+    memory.RecallScope(memory.Scoped(memory.ScopeResource, "user_123")),
+    memory.RecallLimit(5),
 )
 
-result, _ := agent.Execute(ctx, oasis.AgentTask{
-    Input: "What did we discuss yesterday?",
-}.WithThreadID("thread-123").WithUserID("user-42"))
+// Forget — delete by various specs
+n, err := mem.Forget(ctx, memory.ForgetByID("item-id"))
+n, err = mem.Forget(ctx, memory.ForgetByMatch("Go"))
+n, err = mem.Forget(ctx, memory.ForgetByKind(memory.KindNote))
+n, err = mem.Forget(ctx, memory.ForgetOlderThan(30 * 24 * time.Hour))
+
+// Pin — always load this item into context
+err = mem.Pin(ctx, "item-id", true)
+
+// List — filtered query
+items2, err := mem.List(ctx, memory.Filter{
+    Kinds: []memory.Kind{memory.KindFact},
+    Since: time.Now().Add(-7 * 24 * time.Hour).Unix(),
+})
+
+// Get — fetch one item by ID
+item, err := mem.Get(ctx, "item-id")
 ```
 
-What happens during `Execute`:
+## What Is NOT Memory
 
-1. Embed the input and load recent conversation history — when both are needed, these run **concurrently** (embedding API call + database query in parallel via `sync.WaitGroup`). When only one is active, it runs sequentially with no goroutine overhead
-2. Retrieve relevant user facts from MemoryStore, inject into system prompt
-3. Search for relevant messages across all threads (reuses embedding from step 1)
-4. Run the tool-calling loop
-5. Persist user and assistant messages
-6. (Background) Extract and upsert user facts from the conversation turn
+Not every piece of state belongs in `MemoryItem`. Use the right primitive:
 
-## Execution Trace Persistence
+| Data | Where it lives |
+|------|---------------|
+| Live task progress (tool call state, partial results) | Agent execution context — gone when the turn ends |
+| Deferred / scheduled actions | `ScheduledAction` via `Store.CreateScheduledAction` |
+| Conversation messages (what was said, when) | `Store.StoreMessage` / `Store.GetMessages` — accessed via `WithMemory` (history loader) |
+| Document knowledge (articles, manuals, code) | `Chunk` via the ingest pipeline + `Store.SearchChunks` |
+| Working scratchpad that resets per turn | `WithWorkingMemory()` slot in `AgentMemory` |
 
-When `WithConversationMemory` is enabled, assistant messages automatically include execution traces in their `Metadata` field. After each agent execution, `result.Steps` (the `[]StepTrace` from `AgentResult`) is stored under the `"steps"` key:
+If data is live task state, it doesn't need to survive the current turn. If data is user-facing durable knowledge the agent should recall next week, put it in a `MemoryItem`.
+
+## Backpressure and Graceful Shutdown
+
+The ingest pipeline runs in a background goroutine per turn. A semaphore (cap 16) bounds concurrency. When all slots are busy:
+
+1. **Lightweight fallback** — waits up to 30 seconds, then falls back to messages-only persistence (no LLM extraction, no fact upsert, no title generation).
+2. **Drop** — if no slot frees within 30 seconds, the persist is dropped with an `ERROR` log.
+
+Call `Close()` on the `AgentMemory` during shutdown to wait for in-flight goroutines:
 
 ```go
-// Automatically set by the memory pipeline — no user action needed
-assistantMsg.Metadata = map[string]any{"steps": result.Steps}
+defer mem.Close()
 ```
 
-This means any Oasis app with conversation memory gets persisted execution traces for free. Query them back via `Store.GetMessages` or `Store.SearchMessages`:
+## Conversation History and WithMemory
+
+Conversation history (loading past messages before each LLM call, persisting the exchange afterward, cross-thread recall, and compaction) is configured through `WithMemory`. If you only need conversation history — not structured `MemoryItem` storage — pass just the history-related options:
 
 ```go
-messages, _ := store.GetMessages(ctx, threadID, 10)
-for _, m := range messages {
-    if steps, ok := m.Metadata["steps"]; ok {
-        fmt.Printf("Assistant used %d tool calls\n", len(steps.([]any)))
-    }
-}
+agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithMaxHistory(30),
+        memory.WithSemanticRecall(),
+    ),
+)
 ```
 
-Metadata is stored as JSON TEXT (SQLite) or JSONB (PostgreSQL). The `Metadata` field is `map[string]any`, so you can also store custom per-message metadata by setting it before calling `Store.StoreMessage` directly.
+See [concepts/compaction.md](compaction.md) for the full reference including semantic trimming, per-thread compaction, and context compression.
 
 ## See Also
 
-- [Store](store.md) — persistence layer
+- [Store](store.md) — persistence layer (`Store`, `ItemStore`)
+- [Compaction](compaction.md) — per-thread compaction, semantic trimming, per-turn compression
 - [Memory & Recall Guide](../guides/memory-and-recall.md) — practical patterns
+- [API: Memory](../api/memory.md) — full `memory` package reference

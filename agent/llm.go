@@ -8,11 +8,12 @@ import (
 	"strings"
 
 	"github.com/nevindra/oasis/core"
+	"github.com/nevindra/oasis/memory"
 )
 
 // LLMAgent is an Agent that uses an LLM with tools to complete tasks.
-// Optionally supports conversation memory, user memory, and cross-thread search
-// when configured via WithConversationMemory, CrossThreadSearch, and WithUserMemory.
+// Optionally supports conversation memory and cross-thread search when
+// configured via WithMemory and memory.WithSemanticRecall.
 type LLMAgent struct {
 	AgentCore
 }
@@ -36,6 +37,12 @@ func NewLLMAgent(name, description string, provider Provider, opts ...AgentOptio
 
 	return a
 }
+
+// Memory returns the agent's memory handle. Use this to call Remember, Recall,
+// Forget, List, Get, Pin directly from application code. The returned pointer
+// is always non-nil; methods on a zero AgentMemory (when WithMemory was not
+// configured) safely no-op.
+func (a *LLMAgent) Memory() *memory.AgentMemory { return &a.mem }
 
 // Execute runs the tool-calling loop until the LLM produces a final text response.
 func (a *LLMAgent) Execute(ctx context.Context, task AgentTask) (AgentResult, error) {

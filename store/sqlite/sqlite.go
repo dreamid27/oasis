@@ -54,6 +54,10 @@ type Store struct {
 	docOrder      []string         // FIFO insertion order of docIDs
 	docChunkCount map[string]int   // chunk count per docID in vecIndex
 	evictedDocs   map[string]bool  // docIDs evicted from in-memory index
+
+	// ItemStore (memory items) — initialized lazily on first Memory() call.
+	memoryOnce sync.Once
+	itemStore  *ItemStore
 }
 
 // vecEntry holds the cached embedding and document ID for a chunk.
@@ -230,6 +234,17 @@ func (s *Store) Close() error {
 		s.logger.Error("sqlite: close failed", "error", err)
 	}
 	return err
+}
+
+// Memory returns this store's ItemStore handle. Initialized lazily on first call.
+func (s *Store) Memory() *ItemStore {
+	s.memoryOnce.Do(func() {
+		s.itemStore = NewItemStore(s.db, s.logger)
+		if err := s.itemStore.Init(context.Background()); err != nil {
+			s.logger.Error("init item store failed", "error", err)
+		}
+	})
+	return s.itemStore
 }
 
 func boolToInt(b bool) int {

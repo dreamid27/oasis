@@ -18,13 +18,9 @@ Shared by `NewLLMAgent` and `NewNetwork`.
 | `WithDynamicPrompt(fn PromptFunc)` | Per-request system prompt resolution. Overrides `WithPrompt` |
 | `WithDynamicModel(fn ModelFunc)` | Per-request provider/model selection. Overrides constructor provider |
 | `WithDynamicTools(fn ToolsFunc)` | Per-request tool set. **Replaces** (not merges with) `WithTools` |
-| `WithConversationMemory(s Store, opts ...ConversationOption)` | Enable history per thread |
-| `WithEmbedding(e EmbeddingProvider)` | Set the shared embedding provider for use by `WithUserMemory` and `history.CrossThreadSearch` |
-| `WithUserMemory(m MemoryStore)` | Enable user fact read/write (requires `WithEmbedding`) |
+| `WithMemory(opts ...memory.Option)` | Single entry point for memory: conversation history (`memory.WithStore`, `memory.WithMaxHistory`, `memory.WithMaxTokens`), cross-thread recall (`memory.WithSemanticRecall`, `memory.WithSemanticRecallMinScore`), compaction (`memory.WithCompaction`), per-turn compression (`memory.WithCompress`), semantic trimming (`memory.WithSemanticTrimming`, `memory.WithKeepRecent`), auto-titling (`memory.WithAutoTitle`), and structured `MemoryItem` storage (facts, notes, events, playbooks). See [memory package](memory.md) |
 | `WithMaxAttachmentBytes(n int64)` | Max accumulated attachment bytes per execution (default 50 MB) |
 | `WithSuspendBudget(maxSnapshots int, maxBytes int64)` | Per-agent suspend snapshot limits (default 20 snapshots, 256 MB) |
-| `WithCompressModel(fn ModelFunc)` | Provider for LLM-driven per-turn context compression (falls back to main provider). See `WithCompaction` for per-thread compaction (preferred for long threads) |
-| `WithCompressThreshold(n int)` | Rune count threshold for per-turn tool-result compression. **Disabled by default** (zero or negative). Set explicitly to enable. See [Compactor](../concepts/compaction.md) for the preferred per-thread strategy |
 | `WithTemperature(t float64)` | Set LLM sampling temperature for this agent (nil = provider default) |
 | `WithTopP(p float64)` | Set nucleus sampling probability for this agent (nil = provider default) |
 | `WithTopK(k int)` | Set top-K sampling parameter for this agent (nil = provider default) |
@@ -50,36 +46,24 @@ Passed to `WithDeferredSchemas`.
 | `DeferAlwaysOn()` | — | Force all MCP tool schemas deferred regardless of threshold. Equivalent to plain `WithDeferredSchemas()` in v1 |
 | `DeferExclude(serverNames ...string)` | — | Keep the named MCP servers' schemas eager (never deferred), even when deferred mode is active |
 
-## ConversationOption
+## memory.Option
 
-Passed to `WithConversationMemory`.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `MaxHistory(n int)` | 10 | Max recent messages loaded into LLM context |
-| `MaxTokens(n int)` | 0 (disabled) | Token budget for history — trim oldest-first until total fits within n |
-| `CrossThreadSearch(opts ...SemanticOption)` | — | Enable cross-thread semantic recall (requires `WithEmbedding` at agent level) |
-| `WithSemanticTrimming(opts ...SemanticTrimmingOption)` | — | Enable relevance-based history trimming (cosine similarity to current query). Falls back to oldest-first on embedding failure. Embedding provider configured via agent-level `WithEmbedding` |
-| `AutoTitle()` | disabled | Generate a short title from the first user message. Runs in background, idempotent (skipped if thread already has a title) |
-| `WithCompaction(c Compactor, threshold float64)` | disabled | Per-thread structured compaction; threshold is a fraction (0.0–1.0) of the effective context window. Recommended: 0.80. Passing nil compactor or threshold ≤ 0 disables. See [Compactor](../concepts/compaction.md) |
-
-## SemanticOption
-
-Passed to `CrossThreadSearch`.
+Passed to `WithMemory`. See [memory package](memory.md) for the full reference. Common options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `MinScore(score float32)` | 0.60 | Minimum cosine similarity for recall |
-
-> **Note:** The embedding provider used by `CrossThreadSearch` is configured via the agent-level `WithEmbedding(e EmbeddingProvider)` option, not passed here.
-
-## SemanticTrimmingOption
-
-Passed to `WithSemanticTrimming`.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `KeepRecent(n int)` | 3 | Number of most recent messages always preserved during trimming |
+| `memory.WithStore(s Store)` | — | Bind the conversation + memory-item store |
+| `memory.WithEmbedding(e EmbeddingProvider)` | — | Embedding provider used by recall/dedupe/working memory |
+| `memory.WithMaxHistory(n int)` | 10 | Max recent messages loaded into LLM context |
+| `memory.WithMaxTokens(n int)` | 0 (disabled) | Token budget for history — trim oldest-first until total fits within n |
+| `memory.WithSemanticRecall()` | disabled | Enable cross-thread semantic message recall (requires an embedding provider) |
+| `memory.WithSemanticRecallMinScore(s float32)` | 0.60 | Minimum cosine similarity for cross-thread recall |
+| `memory.WithSemanticTrimming()` | disabled | Enable relevance-based history trimming (cosine similarity to current query). Falls back to oldest-first on embedding failure |
+| `memory.WithSemanticTrimEmbedding(e EmbeddingProvider)` | — | Separate (often smaller/faster) embedding provider for semantic trim; defaults to `memory.WithEmbedding` |
+| `memory.WithKeepRecent(n int)` | 3 | Number of most recent messages always preserved during semantic trimming |
+| `memory.WithAutoTitle()` | disabled | Generate a short thread title from the first user message |
+| `memory.WithCompaction(c Compactor, threshold float64)` | disabled | Per-thread structured compaction; threshold is a fraction (0.0–1.0) of the effective context window. Recommended: 0.80. See [Compactor](../concepts/compaction.md) |
+| `memory.WithCompress(fn ModelFunc, threshold int)` | disabled | Per-turn LLM-driven summarization when in-memory messages exceed `threshold` runes; `fn` returns the model (nil falls back to main provider) |
 
 ## StepOption
 

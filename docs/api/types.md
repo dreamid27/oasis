@@ -227,10 +227,11 @@ Score is in [0, 1]; higher means more relevant. Exact range depends on scoring m
 ```go
 type ScoredMessage struct { Message; Score float32 }
 type ScoredChunk struct { Chunk; Score float32 }
-type ScoredFact struct { Fact; Score float32 }
 ```
 
 Score is in [0, 1]. Score 0 means "relevance unknown" (e.g., ANN index).
+
+For memory item search results, see `memory.ScoredItem` in [API: memory](memory.md).
 
 ## LLM Protocol Types
 

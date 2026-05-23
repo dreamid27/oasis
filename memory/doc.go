@@ -12,29 +12,29 @@
 //
 //	import (
 //	    "github.com/nevindra/oasis"
-//	    "github.com/nevindra/oasis/history"
+//	    "github.com/nevindra/oasis/memory"
 //	)
 //
 //	agent := oasis.NewLLMAgent(name, desc, provider,
-//		oasis.WithHistory(
-//			history.Store(store),
-//			history.MaxHistory(10),      // last 10 messages
-//			history.CrossThreadSearch(embedding), // semantic recall
+//		oasis.WithMemory(
+//			memory.WithStore(store),
+//			memory.WithEmbedding(embedding),
+//			memory.WithMaxHistory(10),      // last 10 messages
+//			memory.WithSemanticRecall(),    // cross-thread recall
 //		),
-//		oasis.WithUserMemory(memStore, embedding), // facts + extraction
 //	)
 //
 // # Architecture
 //
 // The memory package is responsible for:
 //
-//  - Loading and assembling conversation context (buildMessages)
-//  - Token-based and semantic trimming for prompt optimization
-//  - Semantic search over cross-thread messages
-//  - Automatic fact extraction and persistence
-//  - Thread lifecycle (creation, title generation)
+//   - Loading and assembling conversation context (buildMessages)
+//   - Token-based and semantic trimming for prompt optimization
+//   - Semantic search over cross-thread messages
+//   - Automatic fact extraction and persistence via the ingest pipeline
+//   - Thread lifecycle (creation, title generation)
 //
 // All memory features are optional. The agent works without any Store
-// configured, and individual features (user memory, cross-thread search, etc.)
+// configured, and individual features (cross-thread search, item memory, etc.)
 // can be mixed and matched.
 package memory

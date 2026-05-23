@@ -1,211 +1,298 @@
 # Memory and Recall
 
-This guide covers practical patterns for wiring conversation memory, cross-thread recall, and user memory into your agents.
+This guide covers practical patterns for wiring conversation history and structured semantic memory into your agents.
 
-## Basic Conversation Memory
+Oasis has a single, unified memory entry point:
+
+- **`WithMemory(memory.Option...)`** — conversation history per thread, cross-thread message recall, semantic trimming, per-thread compaction, per-turn compression, auto-titling, and structured `MemoryItem` storage (facts, notes, events, playbooks, etc.) with automatic extraction, retrieval, and opt-in agent-callable tools.
+
+Pass only the options you need.
+
+## Conversation History
 
 Load/persist message history per thread:
 
 ```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store),
+import (
+    oasis "github.com/nevindra/oasis"
+    "github.com/nevindra/oasis/memory"
 )
 
-// Must pass thread_id for history to work
+agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
+    oasis.WithMemory(
+        memory.WithStore(store),
+    ),
+)
+
+// Must pass ThreadID for history to work
 result, _ := agent.Execute(ctx, oasis.AgentTask{
     Input: "What did we just talk about?",
 }.WithThreadID("thread-123"))
 ```
 
-Without `thread_id`, the agent runs stateless — no history loaded or persisted.
+Without `ThreadID`, the agent runs stateless — no history loaded or persisted.
 
-When `WithConversationMemory` is enabled with a `thread_id`, the agent automatically creates the thread row on the first message (if it doesn't exist) and updates the thread's `updated_at` timestamp on subsequent turns. You don't need to call `CreateThread()` manually — `ListThreads()` and `GetThread()` will correctly return threads created via conversation memory.
-
-## History Limits
-
-Control how much conversation history is loaded before each LLM call. Two options compose — whichever triggers first wins:
+### History Limits
 
 ```go
 // By message count (default: 10 most recent messages)
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.MaxHistory(30)),
+oasis.WithMemory(
+    memory.WithStore(store),
+    memory.WithMaxHistory(30),
 )
 
 // By estimated token budget — trim oldest-first to fit
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.MaxTokens(4000)),
+oasis.WithMemory(
+    memory.WithStore(store),
+    memory.WithMaxTokens(4000),
 )
+```
 
-// Both compose — whichever triggers first wins
+### Semantic Trimming
+
+By default, `MaxTokens` drops the oldest messages first. Semantic trimming instead scores messages by cosine similarity to the current query:
+
+```go
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store,
-        oasis.MaxHistory(50),
-        oasis.MaxTokens(4000),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithMaxTokens(4000),
+        memory.WithSemanticTrimming(),
+        memory.WithKeepRecent(5),
     ),
 )
 ```
 
-Token estimation uses a ~4 characters (runes) per token heuristic with a small overhead for message framing. This is a rough estimate suitable for budget control — not exact tokenizer output. Multi-byte characters (CJK, emoji) are counted correctly as single characters.
-
-## Semantic Trimming
-
-By default, `MaxTokens` drops the oldest messages first. This can lose important early context (e.g., key instructions from turn 1) while keeping recent small talk. Semantic trimming scores older messages by cosine similarity to the current query and drops the least relevant first:
+If you want trimming to use a smaller/faster embedding model than cross-thread recall, set it separately:
 
 ```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.WithSemanticTrimming(),
-    ),
-)
+memory.WithSemanticTrimEmbedding(smallEmbedding),
 ```
 
-### How It Works
-
-1. Load messages from store (up to `MaxHistory`)
-2. If trimming is needed (exceeds `MaxTokens`) and semantic trimming is enabled:
-   - Embed the current user query
-   - Split messages into **recent** (always kept) and **older**
-   - Score each older message by cosine similarity to the query
-   - Drop lowest-scoring messages until the token budget is satisfied
-3. If embedding fails: fall back to oldest-first trimming
-
-### Tuning
-
-```go
-// Keep the 5 most recent messages (default: 3)
-oasis.WithSemanticTrimming(oasis.KeepRecent(5))
-```
-
-### Embedding Reuse
-
-When `CrossThreadSearch` is also enabled, the query embedding is computed once and reused for both cross-thread search and semantic trimming — no extra API call:
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.CrossThreadSearch(),
-        oasis.WithSemanticTrimming(),
-    ),
-)
-```
-
-## Auto-Generated Thread Titles
-
-Automatically generate a short title for each conversation thread:
-
-```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store, oasis.AutoTitle()),
-)
-```
-
-When the first user message arrives, the agent uses its own LLM to generate a title (max 8 words) and stores it on the thread. Titles are only generated once per thread — if a title already exists, it's skipped. This runs in a background goroutine and never blocks the conversation.
-
-## Cross-Thread Recall
+### Cross-Thread Recall
 
 Search past conversations for relevant context:
 
 ```go
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store,
-        oasis.CrossThreadSearch(),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithSemanticRecall(),
+        memory.WithSemanticRecallMinScore(0.7),
     ),
 )
 ```
 
-When the agent receives "What do you know about Go?", it embeds the query and searches all stored messages. Relevant results from other threads are injected into the system prompt.
-
-### Tuning the Threshold
+### Auto-Generated Thread Titles
 
 ```go
-// Higher threshold = more relevant but fewer results
-oasis.CrossThreadSearch(oasis.MinScore(0.75))
-
-// Lower threshold = more results but noisier (default: 0.60)
-oasis.CrossThreadSearch(oasis.MinScore(0.50))
+oasis.WithMemory(
+    memory.WithStore(store),
+    memory.WithAutoTitle(),
+)
 ```
 
-## User Memory (Long-term Facts)
+### Per-Thread Compaction
 
-Learn and remember things about the user:
+When a thread grows large, compact it into a structured 9-section summary:
 
 ```go
-// SQLite
+import "github.com/nevindra/oasis/compaction"
+
+oasis.WithMemory(
+    memory.WithStore(store),
+    memory.WithMaxTokens(100_000),
+    memory.WithCompaction(compaction.NewStructuredCompactor(summarizer), 0.80),
+)
+```
+
+See [Compaction](../concepts/compaction.md) for the full reference.
+
+### Per-Turn Compression
+
+For single-execution turns that bloat on large tool results:
+
+```go
+oasis.WithMemory(
+    memory.WithCompress(func(ctx context.Context, t oasis.AgentTask) oasis.Provider {
+        return summarizer // or return nil to fall back to the main provider
+    }, 200_000),
+)
+```
+
+`WithCompress` does NOT require a Store — it operates on the in-memory slice during one `Execute` call. For long-running chat threads, prefer per-thread compaction via `WithCompaction`.
+
+## Structured Memory (MemoryItem)
+
+`WithMemory` also wires the `memory` package's `MemoryItem`-based system. This replaces the old `WithUserMemory` API.
+
+### Basic Setup
+
+```go
+import (
+    oasis "github.com/nevindra/oasis"
+    "github.com/nevindra/oasis/memory"
+    "github.com/nevindra/oasis/store/sqlite"
+)
+
 store := sqlite.New("oasis.db")
 store.Init(ctx)
-memoryStore := sqlite.NewMemoryStore(store.DB())
-memoryStore.Init(ctx)
-
-// PostgreSQL alternative:
-//   store := postgres.New(pool)
-//   memoryStore := postgres.NewMemoryStore(pool)
-
 
 agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store),  // required for write path
-    oasis.WithUserMemory(memoryStore),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+    ),
 )
 ```
 
 After each conversation turn, the agent automatically:
-1. Extracts durable facts ("User's favorite language is Go")
-2. Handles contradictions ("User now prefers Rust" supersedes the Go fact)
-3. Upserts with semantic deduplication
+1. Extracts durable facts from the conversation using its own LLM
+2. Deduplicates against existing facts (cosine > 0.85 = reinforce; 0.80 = supersedes)
+3. Embeds and upserts to the `ItemStore`
 
-## Full Setup
+Before each LLM call, it retrieves relevant facts and injects them into the system prompt.
 
-All three memory layers together:
+### Custom Recall Configuration
+
+```go
+oasis.WithMemory(
+    memory.WithStore(store),
+    memory.WithEmbedding(embedding),
+    memory.WithRecallKinds(memory.KindFact, memory.KindPlaybook),
+    memory.WithRecallTopK(12),
+    memory.WithSemanticRecall(),                    // cross-thread message recall
+    memory.WithSemanticRecallMinScore(0.70),
+)
+```
+
+### Agent-Callable Tools
+
+By default the agent cannot read or write memory on its own. Enable it explicitly by constructing an `AgentMemory` and passing its tools:
+
+```go
+var mem memory.AgentMemory
+mem.Init(memory.BuildConfig(
+    memory.WithStore(store),
+    memory.WithEmbedding(embedding),
+))
+
+agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithTools(mem.AllTools()...),
+    ),
+)
+```
+
+The four tools available to the agent:
+
+| Tool | What it does |
+|------|-------------|
+| `memory.remember` | Save a `MemoryItem` (content, kind, scope, tags, pinned) |
+| `memory.recall` | Semantic search (query, kind, scope, k) |
+| `memory.forget` | Delete items by ID, substring, kind, or age |
+| `memory.pin` | Pin or unpin an item |
+
+### Storing Different Kinds of Memory
+
+```go
+// Developer-side: directly remember items via AgentMemory
+err := mem.Remember(ctx, memory.MemoryItem{
+    Kind:    memory.KindFact,
+    Content: "User's favorite language is Go",
+    Scope:   memory.Scoped(memory.ScopeResource, "user_123"),
+})
+
+err = mem.Remember(ctx, memory.MemoryItem{
+    Kind:    memory.KindPlaybook,
+    Content: "When user asks about performance, always suggest profiling first",
+    Scope:   memory.Scoped(memory.ScopeAgent, "assistant"),
+})
+```
+
+### Recalling Items
+
+```go
+items, err := mem.Recall(ctx, "programming preferences",
+    memory.RecallKind(memory.KindFact),
+    memory.RecallScope(memory.Scoped(memory.ScopeResource, "user_123")),
+    memory.RecallLimit(5),
+)
+for _, it := range items {
+    fmt.Printf("[%.2f] %s\n", it.Score, it.Item.Content)
+}
+```
+
+### Forgetting and Pinning
+
+```go
+// Forget by ID
+mem.Forget(ctx, memory.ForgetByID("item-abc"))
+
+// Forget by content substring
+mem.Forget(ctx, memory.ForgetByMatch("old employer"))
+
+// Forget items older than 30 days
+mem.Forget(ctx, memory.ForgetOlderThan(30 * 24 * time.Hour))
+
+// Pin an item — always loaded into every prompt
+mem.Pin(ctx, "item-abc", true)
+```
+
+## Putting It All Together
+
+Combine every feature in a single `WithMemory` call:
 
 ```go
 agent := oasis.NewLLMAgent("assistant", "Personal assistant", llm,
     oasis.WithTools(searchTool, scheduleTool),
-    oasis.WithEmbedding(embedding),
-    oasis.WithConversationMemory(store,
-        oasis.MaxTokens(4000),
-        oasis.CrossThreadSearch(oasis.MinScore(0.7)),
-        oasis.WithSemanticTrimming(oasis.KeepRecent(5)),
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithMaxTokens(4000),
+        memory.WithSemanticTrimming(),
+        memory.WithKeepRecent(5),
+        memory.WithSemanticRecall(),
+        memory.WithSemanticRecallMinScore(0.7),
+        memory.WithRecallKinds(memory.KindFact, memory.KindPlaybook),
     ),
-    oasis.WithUserMemory(memoryStore),
     oasis.WithPrompt("You are a personal assistant. Use your memory of the user to give personalized responses."),
 )
+
+result, _ := agent.Execute(ctx, oasis.AgentTask{
+    Input: "What are my preferences for code style?",
+}.WithThreadID("thread-123").WithUserID("user-42"))
 ```
 
-## What Happens During Execute
+### What Happens During Execute
 
-1. Load recent messages from Store (conversation memory)
-2. Embed the input, search all threads for similar messages (cross-thread)
-3. Embed the input, retrieve relevant user facts from MemoryStore
-4. Build the system prompt: base prompt + user facts + cross-thread context
-5. Run the tool-calling loop
-6. Persist the user message and assistant response
-7. (Background) Extract user facts and upsert to MemoryStore
+1. Embed the input (reused for both cross-thread recall and semantic trimming)
+2. Load recent conversation history from the store
+3. Recall relevant `MemoryItem` records (facts, playbooks, etc.)
+4. Search for similar messages from past threads (cross-thread recall)
+5. Build system prompt: base + memory items + cross-thread context
+6. Run the tool-calling loop
+7. Persist user and assistant messages
+8. (Background) Extract new facts and upsert to the ItemStore
 
 ## Graceful Shutdown
 
-Background persist goroutines run after `Execute` returns. Call `Drain()` during shutdown to wait for them:
+Background persist goroutines run after `Execute` returns. Call `Close()` on the agent during shutdown:
 
 ```go
-agent := oasis.NewLLMAgent("assistant", "Helpful assistant", llm,
-    oasis.WithConversationMemory(store),
-)
-
-// ... use agent ...
-
-// On shutdown: wait for in-flight persists to finish.
-agent.Drain()
+// On shutdown:
+agent.Close()   // waits for in-flight history + ingest goroutines
 ```
 
-Both `LLMAgent` and `Network` expose `Drain()`. If you don't call it, in-flight persist goroutines will be killed on process exit (the 30-second timeout still prevents true leaks).
+`LLMAgent` and `Network` both expose `Close()`.
 
 ## Without Memory
 
-Agents are fully functional without memory. Skip the options and they run stateless:
+Agents are fully functional without memory:
 
 ```go
 agent := oasis.NewLLMAgent("worker", "Task executor", llm,
@@ -214,7 +301,42 @@ agent := oasis.NewLLMAgent("worker", "Task executor", llm,
 // No history, no recall, no fact extraction. Just tools.
 ```
 
+## Migration from WithUserMemory and WithHistory
+
+Both `WithUserMemory` and `WithHistory` are removed. Combine the old option lists into one `WithMemory` call:
+
+```go
+// Before
+agent := oasis.NewLLMAgent("assistant", "...", llm,
+    oasis.WithEmbedding(embedding),
+    oasis.WithHistory(
+        history.Store(store),
+        history.MaxHistory(30),
+        history.CrossThreadSearch(),
+        history.Compaction(compactor, 0.80),
+        history.Compress(modelFunc, 200_000),
+    ),
+    oasis.WithUserMemory(memoryStore),
+)
+
+// After
+agent := oasis.NewLLMAgent("assistant", "...", llm,
+    oasis.WithMemory(
+        memory.WithStore(store),
+        memory.WithEmbedding(embedding),
+        memory.WithMaxHistory(30),
+        memory.WithSemanticRecall(),
+        memory.WithCompaction(compactor, 0.80),
+        memory.WithCompress(modelFunc, 200_000),
+    ),
+)
+```
+
+Drop your existing `user_facts` table — data is not auto-migrated.
+
 ## See Also
 
-- [Memory Concept](../concepts/memory.md) — confidence system, extraction pipeline
+- [Memory Concept](../concepts/memory.md) — MemoryItem, pipelines, tools, what is NOT memory
+- [Compaction Concept](../concepts/compaction.md) — per-thread compaction, history strategies
 - [Store Concept](../concepts/store.md) — persistence layer
+- [API: memory](../api/memory.md) — full memory package reference

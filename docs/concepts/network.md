@@ -98,11 +98,11 @@ This means Network inherits **every execution behavior** from the shared loop:
 
 All `AgentOption` values accepted by `NewLLMAgent` also work on `NewNetwork`, including:
 
-- **Memory:** `WithConversationMemory`, `WithUserMemory`, `WithSemanticTrimming`, `CrossThreadSearch`
+- **Memory:** `WithMemory` — single entry point for conversation history, cross-thread recall, compaction, compression, semantic trimming, auto-titling, and structured `MemoryItem` storage
 - **Skills:** `WithActiveSkills`, `WithSkills`
 - **Generation params:** `WithTemperature`, `WithTopP`, `WithTopK`, `WithMaxTokens`
 - **Execution:** `WithPlanExecution`, `WithSubAgentSpawning`, `WithSandbox`
-- **Compression:** `WithCompressModel`, `WithCompressThreshold`, `WithCompaction` (via `WithConversationMemory`) — per-thread compaction is the recommended path for long-running networks; see [Compaction](compaction.md)
+- **Compression / compaction:** pass `memory.WithCompress(fn, threshold)` (per-turn) or `memory.WithCompaction(c, 0.80)` (per-thread, recommended for long-running networks) inside `WithMemory`. See [Compaction](compaction.md)
 - **Limits:** `WithMaxIter`, `WithMaxAttachmentBytes`, `WithSuspendBudget`
 - **Dynamic:** `WithDynamicPrompt`, `WithDynamicModel`, `WithDynamicTools`
 - **Observability:** `WithTracer`, `WithLogger`

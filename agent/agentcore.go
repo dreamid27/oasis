@@ -98,23 +98,23 @@ func InitCore(c *AgentCore, name, description string, provider Provider, cfg *Co
 	// different purposes but share the same interface. See AgentCore type comment.
 	c.compressor = cfg.compactor
 
-	// Wire memory fields via Init to avoid accessing unexported fields across packages.
-	c.mem.Init(memory.AgentMemoryConfig{
-		Store:             cfg.store,
-		Embedding:         cfg.embedding,
-		Memory:            cfg.memory,
-		CrossThreadSearch: cfg.crossThreadSearch,
-		SemanticMinScore:  cfg.semanticMinScore,
-		MaxHistory:        cfg.maxHistory,
-		MaxTokens:         cfg.maxTokens,
-		AutoTitle:         cfg.autoTitle,
-		Provider:          provider,
-		SemanticTrimming:  cfg.semanticTrimming,
-		TrimmingEmbedding: cfg.trimmingEmbedding,
-		KeepRecent:        cfg.keepRecent,
-		Tracer:            cfg.tracer,
-		Logger:            cfg.logger,
-	})
+	// Wire memory. When the caller used WithMemory(...), use the captured
+	// AgentMemoryConfig. Otherwise build a default config from the agent-level
+	// embedding (WithEmbedding) so the orchestrator is initialized cleanly even
+	// when no memory options were passed. memory.AgentMemory.Init copies the
+	// pure-value config into the orchestrator; we then own the only live
+	// AgentMemory (which contains the sync primitives and must never be copied
+	// after Init).
+	memCfg := cfg.memoryConfig
+	if !cfg.memoryInitialized {
+		memCfg = memory.AgentMemoryConfig{
+			Embedding: cfg.embedding,
+			Provider:  provider,
+			Tracer:    cfg.tracer,
+			Logger:    cfg.logger,
+		}
+	}
+	c.mem.Init(memCfg)
 
 	// Compute effective middleware chain: user-provided + auto-OTel when
 	// a tracer is configured and the user hasn't already included one.
