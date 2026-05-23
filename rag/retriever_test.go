@@ -1,0 +1,942 @@
+package rag
+
+import (
+	"context"
+	"testing"
+
+	"github.com/nevindra/oasis/core"
+)
+
+func TestScoreReranker(t *testing.T) {
+	tests := []struct {
+		name     string
+		minScore float32
+		input    []RetrievalResult
+		topK     int
+		wantLen  int
+		wantIDs  []string
+	}{
+		{
+			name:     "filters below min score",
+			minScore: 0.5,
+			input: []RetrievalResult{
+				{ChunkID: "a", Score: 0.9},
+				{ChunkID: "b", Score: 0.3},
+				{ChunkID: "c", Score: 0.7},
+			},
+			topK:    10,
+			wantLen: 2,
+			wantIDs: []string{"a", "c"},
+		},
+		{
+			name:     "respects topK",
+			minScore: 0,
+			input: []RetrievalResult{
+				{ChunkID: "a", Score: 0.9},
+				{ChunkID: "b", Score: 0.8},
+				{ChunkID: "c", Score: 0.7},
+			},
+			topK:    2,
+			wantLen: 2,
+			wantIDs: []string{"a", "b"},
+		},
+		{
+			name:     "sorts by score descending",
+			minScore: 0,
+			input: []RetrievalResult{
+				{ChunkID: "c", Score: 0.3},
+				{ChunkID: "a", Score: 0.9},
+				{ChunkID: "b", Score: 0.6},
+			},
+			topK:    10,
+			wantLen: 3,
+			wantIDs: []string{"a", "b", "c"},
+		},
+		{
+			name:     "empty input",
+			minScore: 0,
+			input:    nil,
+			topK:     5,
+			wantLen:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewScoreReranker(tt.minScore)
+			got, err := r.Rerank(context.Background(), "query", tt.input, tt.topK)
+			if err != nil {
+				t.Fatalf("Rerank() error = %v", err)
+			}
+			if len(got) != tt.wantLen {
+				t.Fatalf("len = %d, want %d", len(got), tt.wantLen)
+			}
+			for i, id := range tt.wantIDs {
+				if got[i].ChunkID != id {
+					t.Errorf("got[%d].ChunkID = %q, want %q", i, got[i].ChunkID, id)
+				}
+			}
+		})
+	}
+}
+
+func TestReciprocalRankFusion(t *testing.T) {
+	tests := []struct {
+		name          string
+		vector        []core.ScoredChunk
+		keyword       []core.ScoredChunk
+		keywordWeight float32
+		wantFirst     string
+		wantLen       int
+	}{
+		{
+			name: "vector only when no keyword results",
+			vector: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "a", Content: "alpha"}, Score: 0.9},
+				{Chunk: core.Chunk{ID: "b", Content: "beta"}, Score: 0.8},
+			},
+			keyword:       nil,
+			keywordWeight: 0.3,
+			wantFirst:     "a",
+			wantLen:       2,
+		},
+		{
+			name: "boosts chunk appearing in both lists",
+			vector: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "a"}, Score: 0.9},
+				{Chunk: core.Chunk{ID: "b"}, Score: 0.8},
+			},
+			keyword: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "b"}, Score: 0.9},
+				{Chunk: core.Chunk{ID: "c"}, Score: 0.8},
+			},
+			keywordWeight: 0.5,
+			wantFirst:     "b",
+			wantLen:       3,
+		},
+		{
+			name:          "empty inputs",
+			vector:        nil,
+			keyword:       nil,
+			keywordWeight: 0.3,
+			wantLen:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reciprocalRankFusion(tt.vector, tt.keyword, tt.keywordWeight)
+			if len(got) != tt.wantLen {
+				t.Fatalf("len = %d, want %d", len(got), tt.wantLen)
+			}
+			if tt.wantLen > 0 && got[0].ChunkID != tt.wantFirst {
+				t.Errorf("got[0].ChunkID = %q, want %q", got[0].ChunkID, tt.wantFirst)
+			}
+		})
+	}
+}
+
+func TestReciprocalRankFusion_ScoresNormalized(t *testing.T) {
+	// A chunk at rank 0 in both lists should have a score of 1.0.
+	vector := []core.ScoredChunk{{Chunk: core.Chunk{ID: "a"}, Score: 0.9}}
+	keyword := []core.ScoredChunk{{Chunk: core.Chunk{ID: "a"}, Score: 0.9}}
+
+	got := reciprocalRankFusion(vector, keyword, 0.3)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	// With both lists contributing at rank 0: (0.7 + 0.3) / (rrfK+1) * (rrfK+1) = 1.0
+	if got[0].Score < 0.99 || got[0].Score > 1.01 {
+		t.Errorf("score = %f, want ~1.0 for rank-0 in both lists", got[0].Score)
+	}
+
+	// Vector-only: HybridRetriever passes keywordWeight=0 when no keyword results.
+	// vectorWeight = 1.0, so rank-0 score = 1.0 / (rrfK+1) * (rrfK+1) = 1.0.
+	vector = []core.ScoredChunk{{Chunk: core.Chunk{ID: "a"}, Score: 0.9}}
+	got = reciprocalRankFusion(vector, nil, 0)
+	if got[0].Score < 0.99 || got[0].Score > 1.01 {
+		t.Errorf("vector-only (kw=0) score = %f, want ~1.0", got[0].Score)
+	}
+
+	// With keywordWeight=0.3 but only vector results, score = vectorWeight * norm = 0.7.
+	got = reciprocalRankFusion(vector, nil, 0.3)
+	if got[0].Score < 0.69 || got[0].Score > 0.71 {
+		t.Errorf("vector-only (kw=0.3) score = %f, want ~0.7", got[0].Score)
+	}
+
+	// All scores must be in [0, 1].
+	vector = []core.ScoredChunk{
+		{Chunk: core.Chunk{ID: "a"}, Score: 0.9},
+		{Chunk: core.Chunk{ID: "b"}, Score: 0.7},
+		{Chunk: core.Chunk{ID: "c"}, Score: 0.5},
+	}
+	keyword = []core.ScoredChunk{
+		{Chunk: core.Chunk{ID: "b"}, Score: 0.8},
+		{Chunk: core.Chunk{ID: "d"}, Score: 0.6},
+	}
+	got = reciprocalRankFusion(vector, keyword, 0.3)
+	for _, r := range got {
+		if r.Score < 0 || r.Score > 1.01 {
+			t.Errorf("chunk %s: score %f out of [0, 1] range", r.ChunkID, r.Score)
+		}
+	}
+}
+
+func TestExtractJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "plain JSON",
+			input: `{"scores":[{"index":0,"score":5}]}`,
+			want:  `{"scores":[{"index":0,"score":5}]}`,
+		},
+		{
+			name:  "markdown code fence",
+			input: "```json\n{\"scores\":[{\"index\":0,\"score\":5}]}\n```",
+			want:  `{"scores":[{"index":0,"score":5}]}`,
+		},
+		{
+			name:  "markdown fence without language",
+			input: "```\n{\"scores\":[{\"index\":0,\"score\":5}]}\n```",
+			want:  `{"scores":[{"index":0,"score":5}]}`,
+		},
+		{
+			name:  "text before JSON",
+			input: "Here is the result: {\"scores\":[]}",
+			want:  `{"scores":[]}`,
+		},
+		{
+			name:  "no JSON at all",
+			input: "just some text",
+			want:  "just some text",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractJSON(tt.input)
+			if got != tt.want {
+				t.Errorf("extractJSON() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMReranker_MarkdownWrappedJSON(t *testing.T) {
+	provider := &mockProvider{
+		responses: []core.ChatResponse{
+			{Content: "```json\n{\"scores\":[{\"index\":0,\"score\":2},{\"index\":1,\"score\":8}]}\n```"},
+		},
+	}
+	r := NewLLMReranker(provider)
+	input := []RetrievalResult{
+		{ChunkID: "a", Content: "first", Score: 0.5},
+		{ChunkID: "b", Content: "second", Score: 0.5},
+	}
+	got, err := r.Rerank(context.Background(), "test", input, 5)
+	if err != nil {
+		t.Fatalf("Rerank() error = %v", err)
+	}
+	// "b" scored 8/10=0.8, "a" scored 2/10=0.2 → b should be first.
+	if got[0].ChunkID != "b" {
+		t.Errorf("got[0].ChunkID = %q, want %q", got[0].ChunkID, "b")
+	}
+}
+
+// --- Mock helpers for HybridRetriever tests ---
+
+type mockEmbeddingProvider struct {
+	embedding []float32
+	err       error
+}
+
+func (m *mockEmbeddingProvider) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = m.embedding
+	}
+	return out, nil
+}
+
+func (m *mockEmbeddingProvider) Dimensions() int { return len(m.embedding) }
+func (m *mockEmbeddingProvider) Name() string    { return "mock" }
+
+type retrieverStore struct {
+	nopStore
+	chunks   []core.ScoredChunk
+	parents  []core.Chunk
+	keywords []core.ScoredChunk
+}
+
+func (s *retrieverStore) SearchChunks(_ context.Context, _ []float32, _ int, _ ...core.ChunkFilter) ([]core.ScoredChunk, error) {
+	return s.chunks, nil
+}
+
+func (s *retrieverStore) GetChunksByIDs(_ context.Context, ids []string) ([]core.Chunk, error) {
+	idSet := make(map[string]bool)
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	var out []core.Chunk
+	for _, c := range s.parents {
+		if idSet[c.ID] {
+			out = append(out, c)
+		}
+	}
+	// Also return non-parent chunks that match
+	for _, sc := range s.chunks {
+		if idSet[sc.ID] {
+			out = append(out, sc.Chunk)
+		}
+	}
+	return out, nil
+}
+
+func (s *retrieverStore) SearchChunksKeyword(_ context.Context, _ string, _ int, _ ...core.ChunkFilter) ([]core.ScoredChunk, error) {
+	return s.keywords, nil
+}
+
+type mockReranker struct {
+	called bool
+}
+
+func (m *mockReranker) Rerank(_ context.Context, _ string, results []RetrievalResult, topK int) ([]RetrievalResult, error) {
+	m.called = true
+	reversed := make([]RetrievalResult, len(results))
+	for i, r := range results {
+		reversed[len(results)-1-i] = r
+	}
+	if len(reversed) > topK {
+		reversed = reversed[:topK]
+	}
+	return reversed, nil
+}
+
+func TestHybridRetriever_VectorOnly(t *testing.T) {
+	store := &retrieverStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", Content: "hello world"}, Score: 0.9},
+			{Chunk: core.Chunk{ID: "c2", Content: "goodbye world"}, Score: 0.8},
+		},
+	}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1, 0.2}}
+
+	r := NewHybridRetriever(store, emb)
+	results, err := r.Retrieve(context.Background(), "hello", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want 2", len(results))
+	}
+	if results[0].ChunkID != "c1" {
+		t.Errorf("results[0].ChunkID = %q, want %q", results[0].ChunkID, "c1")
+	}
+}
+
+func TestHybridRetriever_ParentChildResolution(t *testing.T) {
+	store := &retrieverStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "child1", DocumentID: "doc1", ParentID: "parent1", Content: "small chunk"}, Score: 0.9},
+			{Chunk: core.Chunk{ID: "child2", DocumentID: "doc1", ParentID: "parent1", Content: "another small chunk"}, Score: 0.7},
+			{Chunk: core.Chunk{ID: "c3", DocumentID: "doc1", Content: "no parent"}, Score: 0.8},
+		},
+		parents: []core.Chunk{
+			{ID: "parent1", DocumentID: "doc1", Content: "big parent context with much more detail"},
+		},
+	}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1, 0.2}}
+
+	r := NewHybridRetriever(store, emb)
+	results, err := r.Retrieve(context.Background(), "test", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want 2 (parent dedup + standalone)", len(results))
+	}
+
+	foundParent := false
+	for _, r := range results {
+		if r.Content == "big parent context with much more detail" {
+			foundParent = true
+		}
+	}
+	if !foundParent {
+		t.Error("parent content not found in results")
+	}
+}
+
+func TestHybridRetriever_WithReranker(t *testing.T) {
+	store := &retrieverStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", Content: "first"}, Score: 0.9},
+			{Chunk: core.Chunk{ID: "c2", Content: "second"}, Score: 0.8},
+		},
+	}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1}}
+	rr := &mockReranker{}
+
+	r := NewHybridRetriever(store, emb, WithReranker(rr))
+	results, err := r.Retrieve(context.Background(), "test", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if !rr.called {
+		t.Error("reranker was not called")
+	}
+	if len(results) >= 2 && results[0].ChunkID != "c2" {
+		t.Errorf("results[0].ChunkID = %q, want %q (reranker should reverse)", results[0].ChunkID, "c2")
+	}
+}
+
+func TestHybridRetriever_HybridSearch(t *testing.T) {
+	store := &retrieverStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", Content: "vector match"}, Score: 0.9},
+		},
+		keywords: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", Content: "vector match"}, Score: 0.8},
+			{Chunk: core.Chunk{ID: "c2", Content: "keyword only"}, Score: 0.7},
+		},
+	}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1}}
+
+	r := NewHybridRetriever(store, emb)
+	results, err := r.Retrieve(context.Background(), "test", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want 2", len(results))
+	}
+	if results[0].ChunkID != "c1" {
+		t.Errorf("results[0].ChunkID = %q, want %q (hybrid boost)", results[0].ChunkID, "c1")
+	}
+}
+
+// --- LLMReranker tests ---
+
+func TestLLMReranker(t *testing.T) {
+	provider := &mockProvider{
+		responses: []core.ChatResponse{
+			{Content: `{"scores":[{"index":0,"score":3},{"index":1,"score":9},{"index":2,"score":6}]}`},
+		},
+	}
+
+	r := NewLLMReranker(provider)
+	input := []RetrievalResult{
+		{ChunkID: "a", Content: "first", Score: 0.5},
+		{ChunkID: "b", Content: "second", Score: 0.5},
+		{ChunkID: "c", Content: "third", Score: 0.5},
+	}
+
+	got, err := r.Rerank(context.Background(), "test query", input, 2)
+	if err != nil {
+		t.Fatalf("Rerank() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ChunkID != "b" {
+		t.Errorf("got[0].ChunkID = %q, want %q", got[0].ChunkID, "b")
+	}
+	if got[1].ChunkID != "c" {
+		t.Errorf("got[1].ChunkID = %q, want %q", got[1].ChunkID, "c")
+	}
+}
+
+// --- GraphRetriever tests ---
+
+func TestGraphRetriever_VectorOnlyFallback(t *testing.T) {
+	// core.Store that does NOT implement core.GraphStore — should fall back to vector-only.
+	store := &graphTestStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "chunk one"}, Score: 0.9},
+			{Chunk: core.Chunk{ID: "c2", DocumentID: "d1", Content: "chunk two"}, Score: 0.7},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	gr := NewGraphRetriever(store, emb)
+	results, err := gr.Retrieve(context.Background(), "test query", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want 2", len(results))
+	}
+	if results[0].ChunkID != "c1" {
+		t.Errorf("results[0].ChunkID = %q, want c1", results[0].ChunkID)
+	}
+}
+
+func TestGraphRetriever_WithGraphTraversal(t *testing.T) {
+	store := &graphTestStoreWithEdges{
+		graphTestStore: graphTestStore{
+			chunks: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "seed chunk"}, Score: 0.9},
+			},
+			allChunks: map[string]core.Chunk{
+				"c1": {ID: "c1", DocumentID: "d1", Content: "seed chunk"},
+				"c2": {ID: "c2", DocumentID: "d1", Content: "related chunk"},
+				"c3": {ID: "c3", DocumentID: "d1", Content: "distant chunk"},
+			},
+		},
+		edges: map[string][]core.ChunkEdge{
+			"c1": {{ID: "e1", SourceID: "c1", TargetID: "c2", Relation: core.RelReferences, Weight: 0.8}},
+			"c2": {{ID: "e2", SourceID: "c2", TargetID: "c3", Relation: core.RelElaborates, Weight: 0.6}},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	gr := NewGraphRetriever(store, emb, WithMaxHops(2), WithGraphWeight(0.3))
+	results, err := gr.Retrieve(context.Background(), "test", 10)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+
+	// Should have 3 results: c1 (seed), c2 (hop 1), c3 (hop 2)
+	if len(results) != 3 {
+		t.Fatalf("len = %d, want 3", len(results))
+	}
+
+	// c1 should score highest (seed with high vector score)
+	if results[0].ChunkID != "c1" {
+		t.Errorf("results[0].ChunkID = %q, want c1", results[0].ChunkID)
+	}
+
+	// c2 should score higher than c3 (closer hop)
+	var c2Score, c3Score float32
+	for _, r := range results {
+		if r.ChunkID == "c2" {
+			c2Score = r.Score
+		}
+		if r.ChunkID == "c3" {
+			c3Score = r.Score
+		}
+	}
+	if c2Score <= c3Score {
+		t.Errorf("c2 score (%f) should be > c3 score (%f)", c2Score, c3Score)
+	}
+}
+
+func TestGraphRetriever_Bidirectional(t *testing.T) {
+	store := &graphTestStoreWithEdges{
+		graphTestStore: graphTestStore{
+			chunks: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "c2", DocumentID: "d1", Content: "seed"}, Score: 0.9},
+			},
+			allChunks: map[string]core.Chunk{
+				"c1": {ID: "c1", DocumentID: "d1", Content: "references c2"},
+				"c2": {ID: "c2", DocumentID: "d1", Content: "seed"},
+			},
+		},
+		edges:         map[string][]core.ChunkEdge{},
+		incomingEdges: map[string][]core.ChunkEdge{
+			"c2": {{ID: "e1", SourceID: "c1", TargetID: "c2", Relation: core.RelReferences, Weight: 0.8}},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	// Without bidirectional: only seed (no outgoing edges from c2)
+	gr := NewGraphRetriever(store, emb, WithMaxHops(1))
+	results, _ := gr.Retrieve(context.Background(), "test", 10)
+	if len(results) != 1 {
+		t.Fatalf("non-bidirectional: len = %d, want 1", len(results))
+	}
+
+	// With bidirectional: seed + c1 (via incoming edge)
+	gr = NewGraphRetriever(store, emb, WithMaxHops(1), WithBidirectional(true))
+	results, _ = gr.Retrieve(context.Background(), "test", 10)
+	if len(results) != 2 {
+		t.Fatalf("bidirectional: len = %d, want 2", len(results))
+	}
+}
+
+func TestGraphRetriever_RelationFilter(t *testing.T) {
+	store := &graphTestStoreWithEdges{
+		graphTestStore: graphTestStore{
+			chunks: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "seed"}, Score: 0.9},
+			},
+			allChunks: map[string]core.Chunk{
+				"c1": {ID: "c1", DocumentID: "d1", Content: "seed"},
+				"c2": {ID: "c2", DocumentID: "d1", Content: "referenced"},
+				"c3": {ID: "c3", DocumentID: "d1", Content: "contradicts"},
+			},
+		},
+		edges: map[string][]core.ChunkEdge{
+			"c1": {
+				{ID: "e1", SourceID: "c1", TargetID: "c2", Relation: core.RelReferences, Weight: 0.8},
+				{ID: "e2", SourceID: "c1", TargetID: "c3", Relation: core.RelContradicts, Weight: 0.9},
+			},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	// Filter to only follow "references" edges
+	gr := NewGraphRetriever(store, emb, WithMaxHops(1), WithRelationFilter(core.RelReferences))
+	results, _ := gr.Retrieve(context.Background(), "test", 10)
+
+	// Should have 2: seed + c2 (references), but NOT c3 (contradicts)
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want 2", len(results))
+	}
+	for _, r := range results {
+		if r.ChunkID == "c3" {
+			t.Error("c3 should be filtered out (contradicts relation)")
+		}
+	}
+}
+
+func TestEdgeContext_InRetrievalResult(t *testing.T) {
+	r := RetrievalResult{
+		Content:    "test content",
+		Score:      0.9,
+		ChunkID:    "c1",
+		DocumentID: "d1",
+		GraphContext: []EdgeContext{
+			{FromChunkID: "c0", Relation: core.RelElaborates, Description: "expands on auth flow"},
+		},
+	}
+	if len(r.GraphContext) != 1 {
+		t.Fatalf("len(GraphContext) = %d, want 1", len(r.GraphContext))
+	}
+	if r.GraphContext[0].Description != "expands on auth flow" {
+		t.Errorf("Description = %q, want %q", r.GraphContext[0].Description, "expands on auth flow")
+	}
+}
+
+func TestChunkEdge_Description(t *testing.T) {
+	e := core.ChunkEdge{
+		ID:          "e1",
+		SourceID:    "c1",
+		TargetID:    "c2",
+		Relation:    core.RelReferences,
+		Weight:      0.8,
+		Description: "cites the OAuth spec",
+	}
+	if e.Description != "cites the OAuth spec" {
+		t.Errorf("Description = %q, want %q", e.Description, "cites the OAuth spec")
+	}
+}
+
+// --- GraphRetriever test helpers ---
+
+type graphTestStore struct {
+	nopStore
+	chunks    []core.ScoredChunk
+	allChunks map[string]core.Chunk
+}
+
+func (s *graphTestStore) SearchChunks(_ context.Context, _ []float32, topK int, _ ...core.ChunkFilter) ([]core.ScoredChunk, error) {
+	if len(s.chunks) > topK {
+		return s.chunks[:topK], nil
+	}
+	return s.chunks, nil
+}
+
+func (s *graphTestStore) GetChunksByIDs(_ context.Context, ids []string) ([]core.Chunk, error) {
+	if s.allChunks == nil {
+		return nil, nil
+	}
+	var result []core.Chunk
+	for _, id := range ids {
+		if c, ok := s.allChunks[id]; ok {
+			result = append(result, c)
+		}
+	}
+	return result, nil
+}
+
+type graphTestEmbedding struct{}
+
+func (e *graphTestEmbedding) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = []float32{0.1, 0.2, 0.3}
+	}
+	return result, nil
+}
+
+func (e *graphTestEmbedding) Dimensions() int { return 3 }
+func (e *graphTestEmbedding) Name() string    { return "graph-test" }
+
+type graphTestStoreWithEdges struct {
+	graphTestStore
+	edges         map[string][]core.ChunkEdge
+	incomingEdges map[string][]core.ChunkEdge
+}
+
+func (s *graphTestStoreWithEdges) StoreEdges(_ context.Context, edges []core.ChunkEdge) error {
+	for _, e := range edges {
+		s.edges[e.SourceID] = append(s.edges[e.SourceID], e)
+	}
+	return nil
+}
+
+func (s *graphTestStoreWithEdges) GetEdges(_ context.Context, chunkIDs []string) ([]core.ChunkEdge, error) {
+	var result []core.ChunkEdge
+	for _, id := range chunkIDs {
+		result = append(result, s.edges[id]...)
+	}
+	return result, nil
+}
+
+func (s *graphTestStoreWithEdges) GetIncomingEdges(_ context.Context, chunkIDs []string) ([]core.ChunkEdge, error) {
+	var result []core.ChunkEdge
+	for _, id := range chunkIDs {
+		result = append(result, s.incomingEdges[id]...)
+	}
+	return result, nil
+}
+
+func (s *graphTestStoreWithEdges) PruneOrphanEdges(_ context.Context) (int, error) { return 0, nil }
+
+type graphTestStoreWithKeyword struct {
+	graphTestStoreWithEdges
+	keywords []core.ScoredChunk
+}
+
+func (s *graphTestStoreWithKeyword) SearchChunksKeyword(_ context.Context, _ string, _ int, _ ...core.ChunkFilter) ([]core.ScoredChunk, error) {
+	return s.keywords, nil
+}
+
+func TestGraphRetriever_HybridSeeding(t *testing.T) {
+	store := &graphTestStoreWithKeyword{
+		graphTestStoreWithEdges: graphTestStoreWithEdges{
+			graphTestStore: graphTestStore{
+				chunks: []core.ScoredChunk{
+					{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "vector match"}, Score: 0.9},
+				},
+				allChunks: map[string]core.Chunk{
+					"c1": {ID: "c1", DocumentID: "d1", Content: "vector match"},
+					"c2": {ID: "c2", DocumentID: "d1", Content: "keyword match"},
+					"c3": {ID: "c3", DocumentID: "d1", Content: "graph neighbor"},
+				},
+			},
+			edges: map[string][]core.ChunkEdge{
+				"c2": {{ID: "e1", SourceID: "c2", TargetID: "c3", Relation: core.RelElaborates, Weight: 0.8}},
+			},
+		},
+		keywords: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c2", DocumentID: "d1", Content: "keyword match"}, Score: 0.8},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	// Without hybrid seeding: only c1 is seed, c2+c3 not discovered.
+	gr := NewGraphRetriever(store, emb, WithMaxHops(1))
+	results, _ := gr.Retrieve(context.Background(), "test", 10)
+	hasC3 := false
+	for _, r := range results {
+		if r.ChunkID == "c3" {
+			hasC3 = true
+		}
+	}
+	if hasC3 {
+		t.Error("without hybrid seeding, c3 should not be found (c2 is not a seed)")
+	}
+
+	// With hybrid seeding: c2 becomes a seed via keyword, c3 discovered via graph.
+	gr = NewGraphRetriever(store, emb, WithMaxHops(1), WithSeedKeywordWeight(0.3))
+	results, _ = gr.Retrieve(context.Background(), "test", 10)
+	hasC3 = false
+	for _, r := range results {
+		if r.ChunkID == "c3" {
+			hasC3 = true
+		}
+	}
+	if !hasC3 {
+		t.Error("with hybrid seeding, c3 should be found via c2's graph edge")
+	}
+}
+
+func TestGraphRetriever_GraphContext(t *testing.T) {
+	store := &graphTestStoreWithEdges{
+		graphTestStore: graphTestStore{
+			chunks: []core.ScoredChunk{
+				{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "seed"}, Score: 0.9},
+			},
+			allChunks: map[string]core.Chunk{
+				"c1": {ID: "c1", DocumentID: "d1", Content: "seed"},
+				"c2": {ID: "c2", DocumentID: "d1", Content: "graph discovered"},
+			},
+		},
+		edges: map[string][]core.ChunkEdge{
+			"c1": {{ID: "e1", SourceID: "c1", TargetID: "c2", Relation: core.RelElaborates, Weight: 0.8, Description: "provides more detail"}},
+		},
+	}
+	emb := &graphTestEmbedding{}
+
+	gr := NewGraphRetriever(store, emb, WithMaxHops(1))
+	results, err := gr.Retrieve(context.Background(), "test", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed chunk (c1) should have no GraphContext.
+	// Graph-discovered chunk (c2) should have GraphContext.
+	for _, r := range results {
+		if r.ChunkID == "c1" && len(r.GraphContext) > 0 {
+			t.Error("seed chunk c1 should not have GraphContext")
+		}
+		if r.ChunkID == "c2" {
+			if len(r.GraphContext) != 1 {
+				t.Fatalf("c2 GraphContext len = %d, want 1", len(r.GraphContext))
+			}
+			ec := r.GraphContext[0]
+			if ec.FromChunkID != "c1" {
+				t.Errorf("FromChunkID = %q, want c1", ec.FromChunkID)
+			}
+			if ec.Relation != core.RelElaborates {
+				t.Errorf("Relation = %q, want elaborates", ec.Relation)
+			}
+			if ec.Description != "provides more detail" {
+				t.Errorf("Description = %q, want %q", ec.Description, "provides more detail")
+			}
+		}
+	}
+}
+
+func TestLLMReranker_GracefulDegradation(t *testing.T) {
+	provider := &mockProvider{
+		responses: []core.ChatResponse{
+			{Content: "not valid json"},
+		},
+	}
+	r := NewLLMReranker(provider)
+	input := []RetrievalResult{
+		{ChunkID: "a", Score: 0.5},
+		{ChunkID: "b", Score: 0.3},
+	}
+
+	got, err := r.Rerank(context.Background(), "test", input, 5)
+	if err != nil {
+		t.Fatalf("Rerank() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("should return original results on parse failure, got %d", len(got))
+	}
+}
+
+// --- Task 10.1: core.Sourced interface tests ---
+
+func TestHybridRetriever_Sources_NilBeforeRetrieve(t *testing.T) {
+	store := &retrieverStore{}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1}}
+	r := NewHybridRetriever(store, emb)
+	if srcs := r.Sources(); srcs != nil {
+		t.Errorf("Sources() before any Retrieve = %v, want nil", srcs)
+	}
+}
+
+func TestHybridRetriever_Sources_PopulatedAfterRetrieve(t *testing.T) {
+	store := &retrieverStore{
+		chunks: []core.ScoredChunk{
+			{Chunk: core.Chunk{ID: "c1", DocumentID: "d1", Content: "chunk one"}, Score: 0.9},
+			{Chunk: core.Chunk{ID: "c2", DocumentID: "d1", Content: "chunk two"}, Score: 0.5},
+		},
+	}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1, 0.2}}
+
+	r := NewHybridRetriever(store, emb)
+	results, err := r.Retrieve(context.Background(), "query", 5)
+	if err != nil {
+		t.Fatalf("Retrieve() error = %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("Retrieve() returned no results")
+	}
+
+	srcs := r.Sources()
+	if len(srcs) != len(results) {
+		t.Fatalf("Sources() len = %d, want %d (same as Retrieve)", len(srcs), len(results))
+	}
+
+	// Verify each source has Origin="rag" and non-empty Meta.
+	for i, s := range srcs {
+		if s.Origin != "rag" {
+			t.Errorf("Sources()[%d].Origin = %q, want %q", i, s.Origin, "rag")
+		}
+		if len(s.Meta) == 0 {
+			t.Errorf("Sources()[%d].Meta is empty, want JSON with chunk_id and score", i)
+		}
+	}
+
+	// Verify quote from the first source matches the chunk content.
+	if srcs[0].Quote != results[0].Content {
+		t.Errorf("Sources()[0].Quote = %q, want %q", srcs[0].Quote, results[0].Content)
+	}
+}
+
+func TestResultsToSources_FieldMapping(t *testing.T) {
+	results := []RetrievalResult{
+		{
+			ChunkID:        "cid1",
+			Score:          0.75,
+			Content:        "some passage",
+			DocumentSource: "https://example.com",
+			DocumentTitle:  "Example Doc",
+		},
+	}
+	srcs := resultsToSources(results)
+	if len(srcs) != 1 {
+		t.Fatalf("len = %d, want 1", len(srcs))
+	}
+	s := srcs[0]
+	if s.URL != "https://example.com" {
+		t.Errorf("URL = %q, want %q", s.URL, "https://example.com")
+	}
+	if s.Title != "Example Doc" {
+		t.Errorf("Title = %q, want %q", s.Title, "Example Doc")
+	}
+	if s.Quote != "some passage" {
+		t.Errorf("Quote = %q, want %q", s.Quote, "some passage")
+	}
+	if s.Origin != "rag" {
+		t.Errorf("Origin = %q, want %q", s.Origin, "rag")
+	}
+	if len(s.Meta) == 0 {
+		t.Error("Meta is empty, want JSON with chunk_id and score")
+	}
+}
+
+func TestHybridRetriever_ImplementsSourced(t *testing.T) {
+	store := &retrieverStore{}
+	emb := &mockEmbeddingProvider{embedding: []float32{0.1}}
+	r := NewHybridRetriever(store, emb)
+	var _ core.Sourced = r // compile-time check; this test ensures it stays wired at runtime
+	_ = r.Sources()
+}
+
+func TestResultsToSources_Empty(t *testing.T) {
+	srcs := resultsToSources(nil)
+	if srcs != nil {
+		t.Errorf("resultsToSources(nil) = %v, want nil", srcs)
+	}
+}
+
+func TestResultsToSources_QuoteTruncation(t *testing.T) {
+	longContent := make([]byte, 600)
+	for i := range longContent {
+		longContent[i] = 'x'
+	}
+	results := []RetrievalResult{
+		{ChunkID: "c1", Content: string(longContent), Score: 0.8},
+	}
+	srcs := resultsToSources(results)
+	if len(srcs) != 1 {
+		t.Fatalf("len = %d, want 1", len(srcs))
+	}
+	if len(srcs[0].Quote) != 500 {
+		t.Errorf("Quote len = %d, want 500 (truncated)", len(srcs[0].Quote))
+	}
+}

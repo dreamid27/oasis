@@ -7,6 +7,7 @@ Step-by-step how-tos for common tasks. Each guide links back to its related conc
 | Guide | Related Concept |
 |-------|----------------|
 | [custom-tool.md](custom-tool.md) | [Tool](../concepts/tool.md) |
+| [typed-tool-schemas.md](typed-tool-schemas.md) | [Tool](../concepts/tool.md) |
 | [custom-provider.md](custom-provider.md) | [Provider](../concepts/provider.md) |
 | [custom-store.md](custom-store.md) | [Store](../concepts/store.md) |
 | [custom-agent.md](custom-agent.md) | [Agent](../concepts/agent.md) |
@@ -17,6 +18,7 @@ Step-by-step how-tos for common tasks. Each guide links back to its related conc
 |-------|----------------|
 | [skills.md](skills.md) | [Skill](../concepts/skill.md) |
 | [processors-and-guardrails.md](processors-and-guardrails.md) | [Processor](../concepts/processor.md) |
+| [loop-control.md](loop-control.md) | [Agent](../concepts/agent.md) |
 | [human-in-the-loop.md](human-in-the-loop.md) | [Input Handler](../concepts/input-handler.md) |
 | [memory-and-recall.md](memory-and-recall.md) | [Memory](../concepts/memory.md) |
 | [streaming.md](streaming.md) | [Agent](../concepts/agent.md) |

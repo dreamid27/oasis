@@ -21,8 +21,9 @@
 //			knowledge.New(store, embedding),
 //			search.New(),
 //		),
-//		oasis.WithConversationMemory(store, oasis.CrossThreadSearch(embedding)),
-//		oasis.WithUserMemory(memoryStore, embedding),
+//		oasis.WithEmbedding(embedding),
+//		oasis.WithHistory(history.Store(store), history.CrossThreadSearch()),
+//		oasis.WithUserMemory(memoryStore),
 //	)
 //
 //	result, err := agent.Execute(ctx, "What's the weather like?")
@@ -36,7 +37,7 @@
 //   - [EmbeddingProvider] — text-to-vector embedding
 //   - [Store] — persistence with vector search
 //   - [MemoryStore] — long-term semantic memory
-//   - [Tool] — pluggable capability for LLM function calling
+//   - [AnyTool] — pluggable atomic capability for LLM function calling (use [Tool] for type-safe authoring + [Erase])
 //   - [PreProcessor], [PostProcessor], [PostToolProcessor] — message/response/tool result transformers
 //
 // # Included Implementations

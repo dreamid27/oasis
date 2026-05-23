@@ -150,7 +150,8 @@ Options shared by `NewLLMAgent` and `NewNetwork`:
 | `WithDynamicModel(fn ModelFunc)` | Per-request provider/model selection |
 | `WithDynamicTools(fn ToolsFunc)` | Per-request tool set (replaces static tools) |
 | `WithConversationMemory(s Store, opts...)` | Enable history load/persist per thread |
-| `WithUserMemory(m MemoryStore, e EmbeddingProvider)` | Enable user fact injection + auto-extraction |
+| `WithEmbedding(e EmbeddingProvider)` | Set the shared embedding provider for use by `WithUserMemory` and cross-thread search |
+| `WithUserMemory(m MemoryStore)` | Enable user fact injection + auto-extraction (requires `WithEmbedding`) |
 | `WithMaxAttachmentBytes(n int64)` | Max accumulated attachment bytes per execution (default 50 MB) |
 | `WithSuspendBudget(maxSnapshots int, maxBytes int64)` | Per-agent suspend snapshot limits (default 20 snapshots, 256 MB) |
 | `WithCompressModel(fn ModelFunc)` | Provider for LLM-driven per-turn context compression (falls back to main provider). See [`WithCompaction`](compaction.md) for per-thread compaction (preferred for long threads) |
@@ -368,10 +369,10 @@ Both `LLMAgent` and `Network` expose `Drain()`. Without it, messages from the la
 ```go
 agent := oasis.NewLLMAgent("orchestrator", "Breaks work into sub-tasks", provider,
     oasis.WithTools(searchTool, writeTool),
-    oasis.WithSubAgentSpawning(oasis.SubAgentConfig{
-        MaxSpawnDepth:  2,
-        DenySpawnTools: []string{"write"},
-    }),
+    oasis.WithSubAgentSpawning(
+        oasis.MaxSpawnDepth(2),
+        oasis.DenySpawnTools("write"),
+    ),
 )
 ```
 
@@ -406,9 +407,9 @@ They do **not** inherit: store, memory, processors, input handler, response sche
 `DenySpawnTools` lists tool names to strip from sub-agents. Use this to prevent sub-agents from calling side-effectful tools (writes, sends, etc.) while still allowing reads.
 
 ```go
-oasis.SubAgentConfig{
-    DenySpawnTools: []string{"send_email", "write_file"},
-}
+oasis.WithSubAgentSpawning(
+    oasis.DenySpawnTools("send_email", "write_file"),
+)
 ```
 
 ### Blocked Behaviors
@@ -427,6 +428,137 @@ Parent LLM response:
   spawn_agent(task="research topic B", name="researcher-b")   ─┤─ run in parallel
   spawn_agent(task="research topic C", name="researcher-c")   ─┘
 ```
+
+## Loop Control Hooks
+
+The agent loop exposes three optional hooks for steering execution from
+application code. Hooks compose with — but live outside of — the
+PreProcessor / PostProcessor pipelines: processors transform data flowing
+through the loop; hooks decide what the loop does next.
+
+### `PrepareStep` — per-iteration request mutation
+
+Runs before every LLM call (including retries). Mutate `StepControl.Request`,
+or set `StepControl.Model` / `StepControl.Tools` to override the agent default
+for this iteration only.
+
+```go
+agent.NewLLMAgent("a", "desc", provider,
+    agent.WithPrepareStep(func(ctx context.Context, iter int, ctrl *agent.StepControl) error {
+        if iter >= 3 {
+            // After three iterations, drop expensive tools.
+            ctrl.Tools = []agent.AnyTool{cheapTool}
+        }
+        return nil
+    }),
+)
+```
+
+A non-nil error from the hook fails the run with that error.
+
+### `OnIterationComplete` — decide what's next
+
+Runs after each iteration's LLM response, tool dispatch, and post-tool
+processor chain settle. The hook returns an `IterationDecision`:
+
+| Decision | Effect |
+|---|---|
+| `Continue()` | proceed to next iteration |
+| `Stop(result)` | end the run with the given result |
+| `InjectFeedback(msg)` | append a user-role message and continue |
+| `InjectMessages(msgs...)` | append raw messages (any role) and continue |
+
+```go
+agent.WithOnIterationComplete(func(ctx context.Context, iter int, snap *agent.IterationSnapshot) (agent.IterationDecision, error) {
+    if jsonIsValid(snap.Response.Content) {
+        return agent.Stop(core.AgentResult{Output: snap.Response.Content}), nil
+    }
+    return agent.InjectFeedback("Output is not valid JSON. Try again."), nil
+})
+```
+
+The injected message persists in history; subsequent iterations see it.
+
+### `OnError` — mid-loop recovery
+
+Runs when the LLM or tool call errors inside the loop (skipped for
+`*ErrHalt`, `*ErrSuspended`, and context cancellation). Returns an
+`ErrorDecision`:
+
+| Decision | Effect |
+|---|---|
+| `Propagate()` | bubble the original error to `Execute` (default) |
+| `Retry()` | re-run the same iteration (counts against `MaxIter`) |
+| `RetryWithFeedback(msg)` | append a user message and retry |
+| `HaltDecision(result)` | end the run gracefully with the result, nil error |
+
+```go
+agent.WithOnError(func(ctx context.Context, iter int, err error) (agent.ErrorDecision, error) {
+    if isContextLengthError(err) {
+        return agent.RetryWithFeedback("Your previous output was too long. Be concise."), nil
+    }
+    return agent.Propagate(), nil
+})
+```
+
+If the hook itself returns a non-nil error, that error is what `Execute`
+returns (wrapped as `OnError: <err>`); the original error is not used.
+
+## Per-Call Overrides — `RunOptions`
+
+Call `ExecuteWith(ctx, task, opts)` to override agent defaults for a single
+run. `Execute(ctx, task)` is equivalent to `ExecuteWith(ctx, task, nil)`.
+
+```go
+result, err := a.ExecuteWith(ctx, task, &agent.RunOptions{
+    MaxIter:    oasis.Ptr(3),
+    Generation: &agent.Generation{Temperature: oasis.Ptr(0.2)},
+    Memory:     tenantMemory,
+    Metadata:   map[string]any{"tenant": "acme"},
+})
+```
+
+### Precedence
+
+For each field, the value used is the first non-zero source from this list:
+
+1. `RunOptions` field (call-site)
+2. `WithDynamic*` resolver function (agent-level)
+3. Static `WithX` config (agent-level)
+4. Built-in default
+
+### Slice and struct semantics
+
+**Slice fields** (`Tools`, `Agents`, `ActiveSkills`, `PreProcessors`, etc.):
+- `nil` keeps the agent-level value
+- `[]T{}` (explicit empty) clears all
+- `[]T{...}` (populated) replaces fully
+
+**`Generation` partial override:** `Generation.Temperature`, `TopP`, etc. are
+pointer-typed. Setting one and leaving others nil preserves the agent default
+for the unset fields. To start from the agent default and override one
+parameter:
+
+```go
+gen := a.Generation()           // returns a deep copy
+*gen.Temperature = 0.9
+result, err := a.ExecuteWith(ctx, task, &agent.RunOptions{Generation: &gen})
+```
+
+`Metadata` is shallow-merged with the agent's static metadata (set via
+`WithMetadata`); call-site keys win on conflict.
+
+### What can't be overridden per call
+
+Construction-only options (deliberately absent from `RunOptions`):
+
+- `WithSandbox` — infrastructure wiring
+- `WithSubAgentSpawning` — agent-level capability policy
+- `WithUserMemory(store, embedder)` — provider wiring (use `Memory` to swap orchestrator)
+- `WithSkills(provider)` — skill provider registration
+- `WithHistory` / `WithToolResultStore` / `WithMaxParallelDispatch` — runtime resource wiring
+
+If you need per-request variation of these, file an issue.
 
 ## See Also
 
