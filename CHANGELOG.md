@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
-(planned 0.17.0)
+## [0.17.0] - 2026-05-24
 
 ### Added
 
@@ -1074,7 +1074,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 - `renderers/` directory — PDF, DOCX, XLSX, PPTX renderer scripts removed.
 - `requirements.txt` — Python deps for renderers (library deps remain in Dockerfile for direct agent use).
 
-[Unreleased]: https://github.com/nevindra/oasis/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/nevindra/oasis/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/nevindra/oasis/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/nevindra/oasis/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/nevindra/oasis/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/nevindra/oasis/releases/tag/v0.14.0

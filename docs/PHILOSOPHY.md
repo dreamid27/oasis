@@ -47,15 +47,17 @@ Every design decision asks: **will this still work — and work fast — when ag
 - **Don't foreclose dynamic behavior.** Sub-agent spawning, dynamic tool discovery, runtime negotiation — these are coming. Interfaces should not assume a fixed execution pattern.
 
 ```go
-// Optional capability via separate interface
-type StreamingAgent interface {
-    Agent
-    ExecuteStream(ctx context.Context, task AgentTask, ch chan<- StreamEvent) (AgentResult, error)
+// Optional capability via separate interface — Tools, Retrievers, and
+// Providers may opt in to producing citations. Implementations that
+// don't satisfy Sourced contribute nothing; the core interfaces never
+// grow to accommodate the capability.
+type Sourced interface {
+    Sources() []Source
 }
 
-// Check at runtime — existing code never breaks
-if sa, ok := agent.(StreamingAgent); ok {
-    return sa.ExecuteStream(ctx, task, ch)
+// Check at runtime — existing implementations never break.
+if s, ok := result.(Sourced); ok {
+    agentResult.Sources = append(agentResult.Sources, s.Sources()...)
 }
 ```
 
