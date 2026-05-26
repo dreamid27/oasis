@@ -22,6 +22,8 @@
 package oasis
 
 import (
+	"context"
+
 	"github.com/nevindra/oasis/agent"
 	"github.com/nevindra/oasis/core"
 	"github.com/nevindra/oasis/network"
@@ -195,6 +197,12 @@ var WithRateLimit = ratelimit.WithRateLimit
 var RPM = ratelimit.RPM
 
 // --- Tool helpers ---
+
+// Func creates an [AnyTool] from a plain function. Schema is derived from In
+// by reflection; Out is marshaled to JSON on each call. See [core.Func].
+func Func[In, Out any](name, desc string, fn func(context.Context, In) (Out, error)) AnyTool {
+	return core.Func[In, Out](name, desc, fn)
+}
 
 // Erase converts a typed [Tool] into [AnyTool]. See [core.Erase].
 func Erase[In, Out any](t core.Tool[In, Out]) core.AnyTool { return core.Erase(t) }
