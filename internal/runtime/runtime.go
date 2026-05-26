@@ -35,7 +35,6 @@ const defaultMaxIter = 25
 //	Compactor but serve different purposes and are set on different lifecycles.
 //	Init copies cfg.Compactor → c.Compressor at build time; the runtime uses
 //	c.Compressor directly.
-//
 type Runtime struct {
 	Config // embedded — option-set fields promote up
 
@@ -358,8 +357,8 @@ func (c *Runtime) ExecuteWithSpan(
 	task core.AgentTask,
 	ch chan<- core.StreamEvent,
 	agentType, logKey string,
-	buildCfg func(ctx context.Context, task core.AgentTask, ch chan<- core.StreamEvent) LoopConfig,
-	runLoopFn func(ctx context.Context, cfg LoopConfig, task core.AgentTask, ch chan<- core.StreamEvent) (core.AgentResult, error),
+	buildCfg func(ctx context.Context, task core.AgentTask, ch chan<- core.StreamEvent) *LoopConfig,
+	runLoopFn func(ctx context.Context, cfg *LoopConfig, task core.AgentTask, ch chan<- core.StreamEvent) (core.AgentResult, error),
 ) (core.AgentResult, error) {
 	// Emit run-start as the first event on every stream.
 	if ch != nil {
@@ -516,4 +515,3 @@ func mergeGenerationParams(base *core.GenerationParams, override *Generation) *c
 	overlayNonNilGeneration(out, override)
 	return out
 }
-

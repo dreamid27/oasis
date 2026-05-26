@@ -101,7 +101,12 @@ func (b BatchedRecall) Process(ctx context.Context, in *RetrieveContext) error {
 	for _, r := range results {
 		byKind[r.Item.Kind] = append(byKind[r.Item.Kind], r.Item)
 	}
-	in.Selected = byKind
+	if in.Selected == nil {
+		in.Selected = make(map[Kind][]MemoryItem)
+	}
+	for k, items := range byKind {
+		in.Selected[k] = items
+	}
 
 	headerFor := func(k Kind) string {
 		switch k {

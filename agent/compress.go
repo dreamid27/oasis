@@ -33,7 +33,7 @@ func runeCount(messages []core.ChatMessage) int {
 }
 
 // compressMessages summarizes old tool-result messages via an LLM call.
-func compressMessages(ctx context.Context, cfg LoopConfig, task AgentTask, messages []core.ChatMessage, preserveIters, currentRuneCount int) ([]core.ChatMessage, int) {
+func compressMessages(ctx context.Context, cfg *LoopConfig, task AgentTask, messages []core.ChatMessage, preserveIters, currentRuneCount int) ([]core.ChatMessage, int) {
 	// Pick compression provider.
 	provider := cfg.Provider
 	if cfg.CompressModel != nil {

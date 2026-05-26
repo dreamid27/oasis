@@ -605,7 +605,7 @@ func TestTerminateIteration_PinsContractFields(t *testing.T) {
 	}
 	cfg := LoopConfig{Name: "test", Config: Config{Logger: nopLogger}}
 	extra := AgentResult{SuspendPayload: json.RawMessage(`"x"`), SuspendProtocol: "tag"}
-	res := terminateIteration(context.Background(), cfg, nil, state, core.FinishSuspended, extra, nil)
+	res := terminateIteration(context.Background(), &cfg, nil, state, core.FinishSuspended, extra, nil)
 	if res.outcome != iterDone {
 		t.Fatalf("outcome = %v, want iterDone", res.outcome)
 	}

@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+### Added
+
+- **End-to-end benchmark suite.** Comprehensive benchmarks measuring framework
+  overhead with mocked LLM providers (zero latency). Covers agent loop, tool
+  dispatch, streaming, processor chains, network routing, multi-agent delegation,
+  and memory operations. Run with `go test -bench=. -benchmem ./agent/ ./network/ ./memory/`.
+- **`benchmark.md`** — documented results, how-to-run instructions, and
+  performance analysis.
+
+### Fixed
+
+- **`agent/memory_integration_test.go` compile error.** Updated stale
+  `memory.Store` type assertion to `core.Store` + `memory.ItemStore`.
+
 ## [0.17.1] - 2026-05-26
 
 DX ergonomics patch addressing friction from real-world migration feedback.

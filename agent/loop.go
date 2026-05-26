@@ -44,7 +44,7 @@ var RunLoop = runLoop
 //
 // Iteration body lives in runIteration (iteration.go); the post-loop
 // forced-synthesis tail lives in forceSynthesis below.
-func runLoop(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core.StreamEvent) (AgentResult, error) {
+func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- core.StreamEvent) (AgentResult, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = nopLogger
 	}
@@ -145,7 +145,7 @@ func finalizeRun(ctx context.Context, ch chan<- core.StreamEvent, state *loopSta
 
 // forceSynthesis runs the post-loop forced-synthesis tail when runLoop hits
 // cfg.MaxIter without a natural termination.
-func forceSynthesis(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core.StreamEvent, state *loopState) (AgentResult, error) {
+func forceSynthesis(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- core.StreamEvent, state *loopState) (AgentResult, error) {
 	cfg.Logger.Warn("max iterations reached, forcing synthesis", "agent", cfg.Name, "iteration", cfg.MaxIter)
 	state.messages = append(state.messages, core.UserMessage(
 		"You have used all available tool calls. Summarize what you found and respond to the user."))
@@ -183,7 +183,7 @@ func forceSynthesis(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan
 
 	captureProviderMeta(state, &resp)
 
-	if r, handled := runPostLLMOrHandle(ctx, synthCtx, cfg, task, ch, state, &resp, nil); handled {
+	if r, handled := runPostLLMOrHandle(ctx, synthCtx, cfg, task, ch, state, &resp, iterEndParams{}); handled {
 		return r.final, r.err
 	}
 

@@ -64,7 +64,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 	in := &RetrieveContext{
 		AgentName:    agentName,
 		Task:         task,
-		Selected:     map[Kind][]MemoryItem{},
+		Selected:     nil,
 		SystemPrompt: systemPrompt,
 		Store:        m.itemStore,
 		HistoryStore: m.store,

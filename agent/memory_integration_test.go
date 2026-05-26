@@ -54,8 +54,11 @@ func (s *stubStore) SearchSemantic(_ context.Context, _ []float32, _ memory.Filt
 	return nil, nil
 }
 
-// Verify stubStore satisfies memory.Store at compile time.
-var _ memory.Store = (*stubStore)(nil)
+// Verify stubStore satisfies core.Store + memory.ItemStore at compile time.
+var (
+	_ core.Store      = (*stubStore)(nil)
+	_ memory.ItemStore = (*stubStore)(nil)
+)
 
 // recordingStore tracks calls to StoreMessage, CreateThread, UpdateThread
 // and returns canned history.

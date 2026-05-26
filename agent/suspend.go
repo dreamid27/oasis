@@ -247,7 +247,7 @@ func estimateSnapshotSize(messages []core.ChatMessage) int64 {
 //
 // A default TTL of 30 minutes is applied automatically. Callers can override
 // with WithSuspendTTL or call Release() explicitly.
-func checkSuspendLoop(err error, cfg LoopConfig, messages []core.ChatMessage, task AgentTask) *ErrSuspended {
+func checkSuspendLoop(err error, cfg *LoopConfig, messages []core.ChatMessage, task AgentTask) *ErrSuspended {
 	var suspend *errSuspend
 	if !errors.As(err, &suspend) {
 		return nil
@@ -334,18 +334,18 @@ func checkSuspendLoop(err error, cfg LoopConfig, messages []core.ChatMessage, ta
 			resumed := make([]core.ChatMessage, len(snapshot)+1)
 			copy(resumed, snapshot)
 			resumed[len(snapshot)] = core.UserMessage(formatFn(data))
-			resumeCfg := cfg
+			resumeCfg := *cfg
 			resumeCfg.ResumeMessages = resumed
-			return runLoop(ctx, resumeCfg, task, nil)
+			return runLoop(ctx, &resumeCfg, task, nil)
 		},
 		resumeStream: func(ctx context.Context, data json.RawMessage, ch chan<- core.StreamEvent) (AgentResult, error) {
 			// runLoop closes ch via its safeCloseCh — no additional defer close here.
 			resumed := make([]core.ChatMessage, len(snapshot)+1)
 			copy(resumed, snapshot)
 			resumed[len(snapshot)] = core.UserMessage(formatFn(data))
-			resumeCfg := cfg
+			resumeCfg := *cfg
 			resumeCfg.ResumeMessages = resumed
-			return runLoop(ctx, resumeCfg, task, ch)
+			return runLoop(ctx, &resumeCfg, task, ch)
 		},
 	}
 	if cfg.SuspendCount != nil {

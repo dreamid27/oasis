@@ -95,7 +95,7 @@ func (a *LLMAgent) executeRaw(ctx context.Context, task AgentTask, opts ...core.
 	}
 	ctx = WithTaskContext(ctx, task)
 	return a.ExecuteWithSpan(ctx, task, rcfg.Stream, "LLMAgent", "agent",
-		func(ctx context.Context, task AgentTask, ch chan<- core.StreamEvent) LoopConfig {
+		func(ctx context.Context, task AgentTask, ch chan<- core.StreamEvent) *LoopConfig {
 			return a.buildLoopConfig(ctx, task, ch, ro)
 		},
 		runLoop,
@@ -116,14 +116,15 @@ func (p *executeRawProxy) Execute(ctx context.Context, task AgentTask, opts ...c
 // buildLoopConfig wires LLMAgent fields into a LoopConfig for runLoop.
 // Used by both Execute / ExecuteStream (opts = nil → agent defaults) and
 // ExecuteWith / ExecuteStreamWith (opts != nil → per-call overrides).
-func (a *LLMAgent) buildLoopConfig(ctx context.Context, task AgentTask, ch chan<- core.StreamEvent, opts *RunOptions) LoopConfig {
+func (a *LLMAgent) buildLoopConfig(ctx context.Context, task AgentTask, ch chan<- core.StreamEvent, opts *RunOptions) *LoopConfig {
 	cfg := a.ApplyRunOptions(opts)
 	prompt, provider := a.ResolvePromptAndProviderWith(ctx, task, cfg)
 	askDef := askUserToolDef()
 	planDef := executePlanToolDef()
 	toolDefs, executeTool, executeToolStream, isStreamingTool := a.ResolveTools(ctx, task, nil, &askDef, &planDef)
 	dispatch := a.makeDispatch(executeTool, executeToolStream, ch, toolDefs, isStreamingTool, cfg)
-	return a.BaseLoopConfig("agent:"+a.Name(), prompt, provider, toolDefs, dispatch, cfg, a.ResolveMem(opts))
+	lc := a.BaseLoopConfig("agent:"+a.Name(), prompt, provider, toolDefs, dispatch, cfg, a.ResolveMem(opts))
+	return &lc
 }
 
 // makeDispatch returns a DispatchFunc that executes tools via the given

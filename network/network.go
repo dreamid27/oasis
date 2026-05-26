@@ -183,7 +183,7 @@ func (n *Network) Execute(ctx context.Context, task agent.AgentTask, opts ...cor
 	}
 	ctx = agent.WithTaskContext(ctx, task)
 	return n.ExecuteWithSpan(ctx, task, rcfg.Stream, "Network", "network",
-		func(ctx context.Context, task agent.AgentTask, ch chan<- core.StreamEvent) agent.LoopConfig {
+		func(ctx context.Context, task agent.AgentTask, ch chan<- core.StreamEvent) *agent.LoopConfig {
 			return n.buildLoopConfig(ctx, task, ch, ro)
 		},
 		agent.RunLoop,
@@ -194,12 +194,13 @@ func (n *Network) Execute(ctx context.Context, task agent.AgentTask, opts ...cor
 // Used by both Execute / ExecuteStream (opts = nil) and
 // ExecuteWith / ExecuteStreamWith (opts != nil). Resolves dynamic prompt,
 // model, and tools, and applies RunOptions overrides to the router config.
-func (n *Network) buildLoopConfig(ctx context.Context, task agent.AgentTask, ch chan<- core.StreamEvent, opts *agent.RunOptions) agent.LoopConfig {
+func (n *Network) buildLoopConfig(ctx context.Context, task agent.AgentTask, ch chan<- core.StreamEvent, opts *agent.RunOptions) *agent.LoopConfig {
 	cfg := n.ApplyRunOptions(opts)
 	prompt, provider := n.ResolvePromptAndProviderWith(ctx, task, cfg)
 	// Network does not use ask_user, execute_plan, or spawn_agent builtins.
 	toolDefs, executeTool, executeToolStream, isStreamingTool := n.ResolveTools(ctx, task, n.buildToolDefs, nil, nil)
-	return n.BaseLoopConfig("network:"+n.Name(), prompt, provider, toolDefs, n.makeDispatch(task, ch, executeTool, executeToolStream, toolDefs, isStreamingTool, cfg), cfg, n.ResolveMem(opts))
+	lc := n.BaseLoopConfig("network:"+n.Name(), prompt, provider, toolDefs, n.makeDispatch(task, ch, executeTool, executeToolStream, toolDefs, isStreamingTool, cfg), cfg, n.ResolveMem(opts))
+	return &lc
 }
 
 // makeDispatch returns a DispatchFunc that routes tool calls to subagents,
