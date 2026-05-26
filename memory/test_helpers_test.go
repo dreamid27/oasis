@@ -138,5 +138,6 @@ func (s *testStore) FindScheduledActionsByDescription(_ context.Context, _ strin
 // Close is explicitly implemented here to satisfy core.Store.
 func (s *testStore) Close() error { return nil }
 
-// compile-time check that *testStore satisfies the full Store interface
-var _ Store = (*testStore)(nil)
+// compile-time checks that *testStore satisfies both required interfaces
+var _ core.Store = (*testStore)(nil)
+var _ core.MemoryItemStore = (*testStore)(nil)

@@ -10,7 +10,7 @@
 //   - github.com/nevindra/oasis/workflow    — Workflow / DAG orchestration
 //   - github.com/nevindra/oasis/memory      — Memory configuration
 //   - github.com/nevindra/oasis/skills      — Skill providers
-//   - github.com/nevindra/oasis/core        — Protocol types, events, finish reasons
+//   - github.com/nevindra/oasis/core        — Full protocol type set (common types re-exported above)
 //   - github.com/nevindra/oasis/processor   — Processor chain helper
 //   - github.com/nevindra/oasis/ratelimit   — Rate-limited provider wrapper
 //   - github.com/nevindra/oasis/provider/*  — Provider implementations
@@ -56,6 +56,15 @@ type Hooks = agent.Hooks
 type Stream = agent.Stream
 type SuspendProtocol[Req, Resp any] = agent.SuspendProtocol[Req, Resp]
 type ErrSuspended = agent.ErrSuspended
+
+// --- Protocol types ---
+
+type Store            = core.Store
+type ToolDefinition   = core.ToolDefinition
+type StreamEvent      = core.StreamEvent
+type StreamEventType  = core.StreamEventType
+type FinishReason     = core.FinishReason
+type InputHandler     = agent.InputHandler
 
 // --- Constructors ---
 
@@ -128,6 +137,58 @@ var WithOverrides = agent.WithOverrides
 var WithStream = core.WithStream
 var WithDeadline = core.WithDeadline
 
+// --- Stream event types (curated — niche events stay in core) ---
+
+var (
+	EventTextDelta       = core.EventTextDelta
+	EventToolCallStart   = core.EventToolCallStart
+	EventToolCallResult  = core.EventToolCallResult
+	EventToolCallDelta   = core.EventToolCallDelta
+	EventToolProgress    = core.EventToolProgress
+	EventAgentStart      = core.EventAgentStart
+	EventAgentFinish     = core.EventAgentFinish
+	EventRoutingDecision = core.EventRoutingDecision
+	EventThinking        = core.EventThinking
+	EventFileAttachment  = core.EventFileAttachment
+	EventRunStart        = core.EventRunStart
+	EventRunFinish       = core.EventRunFinish
+	EventIterationStart  = core.EventIterationStart
+	EventIterationFinish = core.EventIterationFinish
+	EventError           = core.EventError
+)
+
+// --- Finish reasons ---
+
+var (
+	FinishStop          = core.FinishStop
+	FinishToolCalls     = core.FinishToolCalls
+	FinishLength        = core.FinishLength
+	FinishContentFilter = core.FinishContentFilter
+	FinishHalted        = core.FinishHalted
+	FinishSuspended     = core.FinishSuspended
+	FinishMaxIter       = core.FinishMaxIter
+	FinishError         = core.FinishError
+)
+
+// --- Message constructors ---
+
+var (
+	SystemMessage    = core.SystemMessage
+	UserMessage      = core.UserMessage
+	AssistantMessage = core.AssistantMessage
+)
+
+// --- Additional agent options ---
+
+var WithSandbox             = agent.WithSandbox
+var InputHandlerFromContext = agent.InputHandlerFromContext
+
+// --- Convenience functions ---
+
+// Chat is a non-streaming convenience wrapper around Provider.ChatStream.
+// It discards stream events and returns the final assembled response.
+var Chat = core.Chat
+
 // --- Provider wrappers ---
 
 var WithRateLimit = ratelimit.WithRateLimit
@@ -137,3 +198,16 @@ var RPM = ratelimit.RPM
 
 // Erase converts a typed [Tool] into [AnyTool]. See [core.Erase].
 func Erase[In, Out any](t core.Tool[In, Out]) core.AnyTool { return core.Erase(t) }
+
+// TextResult is a convenience for tools producing plain text. See [core.TextResult].
+var TextResult = core.TextResult
+
+// JSONResult marshals any value into a ToolResult. See [core.JSONResult].
+var JSONResult = core.JSONResult
+
+// ErrorResult returns a ToolResult with the Error field set. See [core.ErrorResult].
+var ErrorResult = core.ErrorResult
+
+// RawTool creates an AnyTool from a name, description, JSON schema, and raw
+// execution function. See [core.RawTool].
+var RawTool = core.RawTool

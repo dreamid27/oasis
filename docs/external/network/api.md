@@ -30,7 +30,7 @@ after construction.
 type Option func(*Network)
 ```
 
-Functional option for `New`. Built-in options: `WithChildren`, `WithRouter`,
+Functional option for `New`. Built-in options: `WithChildren`, `WithAgentOptions`,
 `WithSupervisor`, `WithSupervisorFor`, `WithDynamicSpawning`.
 
 ---
@@ -254,18 +254,18 @@ Each child is wrapped with any configured supervisor policies.
 
 ---
 
-### `WithRouter`
+### `WithAgentOptions`
 
 ```go
-func WithRouter(opts ...agent.AgentOption) Option
+func WithAgentOptions(opts ...agent.AgentOption) Option
 ```
 
-Forwards `agent.AgentOption` values to the router LLM's internal `Config`.
-Use this to give the router its own memory, tracer, logger, tool config, etc.
+Applies agent-level options (prompt, tools, memory, sandbox, etc.) to the
+network's internal routing agent.
 
 ```go
 net := network.New("team", "...", routerP,
-    network.WithRouter(agent.WithTracer(t), agent.WithMemory(mem)),
+    network.WithAgentOptions(agent.WithTracer(t), agent.WithMemory(mem)),
 )
 ```
 

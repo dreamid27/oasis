@@ -11,8 +11,9 @@ import (
 // Option configures an AgentMemoryConfig.
 type Option func(*AgentMemoryConfig)
 
-// WithStore binds the unified Store (core.Store + ItemStore).
-func WithStore(s Store) Option { return func(c *AgentMemoryConfig) { c.Store = s } }
+// WithStore binds the conversation store. Implement core.MemoryItemStore as
+// well to enable memory-item operations (recall, remember, forget, etc.).
+func WithStore(s core.Store) Option { return func(c *AgentMemoryConfig) { c.Store = s } }
 
 // WithEmbedding sets the embedding provider used for recall + dedupe + working memory.
 func WithEmbedding(p core.EmbeddingProvider) Option {

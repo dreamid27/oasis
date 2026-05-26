@@ -21,17 +21,17 @@ var agentToolParamSchema = json.RawMessage(
 )
 
 // Option configures a Network. Pass Option values to network.New.
-// Use WithRouter to forward agent.AgentOption values to the router LLM.
+// Use WithAgentOptions to forward agent.AgentOption values to the router LLM.
 type Option func(*Network)
 
-// WithRouter wraps agent.AgentOption values for the Network's router LLM.
-// Use this to give the router its own tools, memory, tracer, etc.
+// WithAgentOptions applies agent-level options (prompt, tools, memory, sandbox,
+// etc.) to the network's internal routing agent.
 //
 //	net := network.New("team", "...", routerP,
 //	    network.WithChildren(a, b),
-//	    network.WithRouter(agent.WithTracer(t), agent.WithMemory(...)),
+//	    network.WithAgentOptions(agent.WithTracer(t), agent.WithMemory(...)),
 //	)
-func WithRouter(opts ...agent.AgentOption) Option {
+func WithAgentOptions(opts ...agent.AgentOption) Option {
 	return func(n *Network) { n.pendingRouterOpts = append(n.pendingRouterOpts, opts...) }
 }
 
@@ -83,7 +83,7 @@ type Network struct {
 //
 //	net := network.New("coordinator", "...", routerP,
 //	    network.WithChildren(searchAgent, summarizeAgent),
-//	    network.WithRouter(agent.WithTracer(t)),
+//	    network.WithAgentOptions(agent.WithTracer(t)),
 //	)
 func New(name, description string, router core.Provider, opts ...Option) *Network {
 	n := &Network{
@@ -99,7 +99,7 @@ func New(name, description string, router core.Provider, opts ...Option) *Networ
 		}
 	}
 
-	// Build router's Config from any WithRouter-supplied opts, then init runtime.
+	// Build router's Config from any WithAgentOptions-supplied opts, then init runtime.
 	cfg := agent.BuildConfig(n.pendingRouterOpts)
 	n.pendingRouterOpts = nil
 	runtime.Init(&n.Runtime, name, description, router, cfg)

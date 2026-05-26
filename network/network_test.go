@@ -73,7 +73,7 @@ func TestNetworkDynamicPrompt(t *testing.T) {
 	}
 
 	net := New("dynamic", "Dynamic", router,
-		WithRouter(agent.WithDynamicPrompt(func(_ context.Context, task agent.AgentTask) string {
+		WithAgentOptions(agent.WithDynamicPrompt(func(_ context.Context, task agent.AgentTask) string {
 			return "router for " + task.UserID
 		})),
 	)
@@ -106,7 +106,7 @@ func TestNetworkTaskFromContextInTool(t *testing.T) {
 		},
 	}
 
-	net := New("ctx", "Context test", router, WithRouter(agent.WithTools(ctxTool)))
+	net := New("ctx", "Context test", router, WithAgentOptions(agent.WithTools(ctxTool)))
 	net.Execute(context.Background(), agent.AgentTask{
 		Input:  "test",
 		UserID: "user-99",
@@ -122,7 +122,7 @@ func TestNetworkDynamicModel(t *testing.T) {
 	routerB := &mockProvider{name: "router-b", responses: []core.ChatResponse{{Content: "from B"}}}
 
 	net := New("dynamic", "Dynamic model", routerA,
-		WithRouter(agent.WithDynamicModel(func(_ context.Context, task agent.AgentTask) core.Provider {
+		WithAgentOptions(agent.WithDynamicModel(func(_ context.Context, task agent.AgentTask) core.Provider {
 			if task.Extra["tier"] == "pro" {
 				return routerB
 			}
@@ -218,7 +218,7 @@ func TestNetworkWithSkillsRegistersSkillTools(t *testing.T) {
 	}
 
 	net := New("skills-net", "test", provider,
-		WithRouter(agent.WithSkills(&stubSkillProvider{})),
+		WithAgentOptions(agent.WithSkills(&stubSkillProvider{})),
 	)
 
 	defs := net.Tools().AllDefinitions()

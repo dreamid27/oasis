@@ -35,7 +35,8 @@ type IngestContext struct {
 	ThreadCreated bool // set by EnsureThread when a new row was created
 
 	// Wiring
-	Store     Store
+	Store     core.Store           // conversation store (threads, messages)
+	ItemStore core.MemoryItemStore // memory items; may be nil when store doesn't implement it
 	Embedding core.EmbeddingProvider
 	Provider  core.Provider
 	Logger    *slog.Logger

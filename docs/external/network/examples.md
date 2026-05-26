@@ -56,7 +56,7 @@ func main() {
 
 **Variations:**
 - Add more specialist agents by passing additional `core.Agent` values to `WithChildren`.
-- Give the router its own system prompt via `network.WithRouter(agent.WithPrompt("..."))`.
+- Give the router its own system prompt via `network.WithAgentOptions(agent.WithPrompt("..."))`.
 - Scope the task to a user session: `core.AgentTask{Input: "...", UserID: "user-42", ThreadID: "thread-7"}`.
 
 ---

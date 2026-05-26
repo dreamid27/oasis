@@ -21,7 +21,8 @@ const maxIngestGoroutines = 16
 // AgentMemory orchestrates memory I/O for an LLMAgent. All fields are
 // optional — a zero AgentMemory with no Store does nothing.
 type AgentMemory struct {
-	store     Store                   // unified core.Store + ItemStore
+	store     core.Store              // conversation history (threads, messages)
+	itemStore core.MemoryItemStore    // memory items; non-nil only when store also implements it
 	embedding core.EmbeddingProvider
 	provider  core.Provider           // for LLM-driven processors (extraction, titling)
 
@@ -76,7 +77,7 @@ type AgentMemory struct {
 // AgentMemoryConfig holds the fields used to populate an AgentMemory.
 // All fields are optional; zero values mean "use default" or "disabled".
 type AgentMemoryConfig struct {
-	Store     Store
+	Store     core.Store
 	Embedding core.EmbeddingProvider
 	Provider  core.Provider
 
@@ -128,6 +129,9 @@ type AgentMemoryConfig struct {
 // Init populates the AgentMemory from the given config. Call once before use.
 func (m *AgentMemory) Init(cfg AgentMemoryConfig) {
 	m.store = cfg.Store
+	if is, ok := cfg.Store.(core.MemoryItemStore); ok {
+		m.itemStore = is
+	}
 	m.embedding = cfg.Embedding
 	m.provider = cfg.Provider
 	m.ingestProcs = cfg.IngestProcs
@@ -268,6 +272,7 @@ func (m *AgentMemory) PersistTurn(ctx context.Context, agentName string, task co
 			AsstText:  asstText,
 			Steps:     steps,
 			Store:     m.store,
+			ItemStore: m.itemStore,
 			Embedding: m.embedding,
 			Provider:  m.provider,
 			Logger:    m.logger,
@@ -290,6 +295,7 @@ func (m *AgentMemory) PersistTurn(ctx context.Context, agentName string, task co
 //   - Embedding: backfilled if EmbeddingProvider is set
 func (m *AgentMemory) Remember(ctx context.Context, item MemoryItem) error {
 	if m.store == nil { return errors.New("memory: no store configured") }
+	if m.itemStore == nil { return errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
 	if item.ID == "" { item.ID = core.NewID() }
 	if item.Scope.Kind == "" {
 		item.Scope = Scoped(ScopeResource, "") // caller-supplied or empty fallback
@@ -303,7 +309,7 @@ func (m *AgentMemory) Remember(ctx context.Context, item MemoryItem) error {
 			item.Embedding = embs[0]
 		}
 	}
-	return m.store.Upsert(ctx, item)
+	return m.itemStore.Upsert(ctx, item)
 }
 
 // RecallOption configures Recall.
@@ -321,12 +327,13 @@ func RecallLimit(n int) RecallOption { return func(c *recallCfg) { c.limit = n }
 // Recall returns items semantically similar to query.
 func (m *AgentMemory) Recall(ctx context.Context, query string, opts ...RecallOption) ([]ScoredItem, error) {
 	if m.store == nil { return nil, errors.New("memory: no store configured") }
+	if m.itemStore == nil { return nil, errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
 	if m.embedding == nil { return nil, errors.New("memory: no embedding configured") }
 	cfg := recallCfg{limit: 5}
 	for _, o := range opts { o(&cfg) }
 	embs, err := m.embedding.Embed(ctx, []string{query})
 	if err != nil || len(embs) == 0 { return nil, err }
-	return m.store.SearchSemantic(ctx, embs[0], Filter{
+	return m.itemStore.SearchSemantic(ctx, embs[0], Filter{
 		Kinds: cfg.kinds, Scope: cfg.scope,
 	}, cfg.limit)
 }
@@ -348,8 +355,9 @@ func ForgetOlderThan(d time.Duration) ForgetSpec { return ForgetSpec{Older: d} }
 // Forget deletes items matching the spec. Returns count deleted.
 func (m *AgentMemory) Forget(ctx context.Context, spec ForgetSpec) (int, error) {
 	if m.store == nil { return 0, errors.New("memory: no store configured") }
+	if m.itemStore == nil { return 0, errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
 	if spec.ID != "" {
-		err := m.store.Delete(ctx, spec.ID)
+		err := m.itemStore.Delete(ctx, spec.ID)
 		if err != nil { return 0, err }
 		return 1, nil
 	}
@@ -358,37 +366,40 @@ func (m *AgentMemory) Forget(ctx context.Context, spec ForgetSpec) (int, error) 
 	if spec.Kind != "" { f.Kinds = []Kind{spec.Kind} }
 	if spec.Older > 0 { f.Until = core.NowUnix() - int64(spec.Older.Seconds()) }
 	if spec.Match != "" {
-		items, err := m.store.List(ctx, f)
+		items, err := m.itemStore.List(ctx, f)
 		if err != nil { return 0, err }
 		n := 0
 		for _, it := range items {
 			if strings.Contains(strings.ToLower(it.Content), strings.ToLower(spec.Match)) {
-				if err := m.store.Delete(ctx, it.ID); err == nil { n++ }
+				if err := m.itemStore.Delete(ctx, it.ID); err == nil { n++ }
 			}
 		}
 		return n, nil
 	}
-	return m.store.DeleteWhere(ctx, f)
+	return m.itemStore.DeleteWhere(ctx, f)
 }
 
 // List returns items matching the filter.
 func (m *AgentMemory) List(ctx context.Context, f Filter) ([]MemoryItem, error) {
 	if m.store == nil { return nil, errors.New("memory: no store configured") }
-	return m.store.List(ctx, f)
+	if m.itemStore == nil { return nil, errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
+	return m.itemStore.List(ctx, f)
 }
 
 // Get fetches one item by ID.
 func (m *AgentMemory) Get(ctx context.Context, id string) (MemoryItem, error) {
 	if m.store == nil { return MemoryItem{}, errors.New("memory: no store configured") }
-	return m.store.Get(ctx, id)
+	if m.itemStore == nil { return MemoryItem{}, errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
+	return m.itemStore.Get(ctx, id)
 }
 
 // Pin sets or clears the pinned flag.
 func (m *AgentMemory) Pin(ctx context.Context, id string, pinned bool) error {
 	if m.store == nil { return errors.New("memory: no store configured") }
-	it, err := m.store.Get(ctx, id)
+	if m.itemStore == nil { return errors.New("memory: this operation requires a store implementing core.MemoryItemStore") }
+	it, err := m.itemStore.Get(ctx, id)
 	if err != nil { return err }
 	it.Pinned = pinned
 	it.UpdatedAt = core.NowUnix()
-	return m.store.Upsert(ctx, it)
+	return m.itemStore.Upsert(ctx, it)
 }

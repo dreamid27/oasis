@@ -122,10 +122,10 @@ func (Embedder) Process(ctx context.Context, in *IngestContext) error {
 type Upserter struct{}
 
 func (Upserter) Process(ctx context.Context, in *IngestContext) error {
-	if in.Store == nil || len(in.Candidates) == 0 {
+	if in.ItemStore == nil || len(in.Candidates) == 0 {
 		return nil
 	}
-	if err := in.Store.UpsertBatch(ctx, in.Candidates); err != nil {
+	if err := in.ItemStore.UpsertBatch(ctx, in.Candidates); err != nil {
 		in.Logger.Error("upsert candidates failed", "n", len(in.Candidates), "error", err)
 	}
 	return nil
@@ -140,7 +140,7 @@ type DecayProbabilistic struct {
 }
 
 func (d DecayProbabilistic) Process(ctx context.Context, in *IngestContext) error {
-	if in.Store == nil {
+	if in.ItemStore == nil {
 		return nil
 	}
 	p := d.Probability
@@ -156,7 +156,7 @@ func (d DecayProbabilistic) Process(ctx context.Context, in *IngestContext) erro
 	}
 	until := core.NowUnix() - age
 	falseVal := false
-	_, err := in.Store.DeleteWhere(ctx, Filter{
+	_, err := in.ItemStore.DeleteWhere(ctx, Filter{
 		Kinds:  []Kind{KindFact},
 		Until:  until,
 		Pinned: &falseVal,
@@ -355,7 +355,7 @@ func scopeForKind(task core.AgentTask, kind Kind) Scope {
 type Deduper struct{}
 
 func (Deduper) Process(ctx context.Context, in *IngestContext) error {
-	if in.Store == nil || in.Embedding == nil || len(in.Candidates) == 0 {
+	if in.ItemStore == nil || in.Embedding == nil || len(in.Candidates) == 0 {
 		return nil
 	}
 	// Collect supersedes texts.
@@ -375,13 +375,13 @@ func (Deduper) Process(ctx context.Context, in *IngestContext) error {
 		return nil
 	}
 	for _, e := range embs {
-		results, err := in.Store.SearchSemantic(ctx, e, Filter{Kinds: []Kind{KindFact}}, 5)
+		results, err := in.ItemStore.SearchSemantic(ctx, e, Filter{Kinds: []Kind{KindFact}}, 5)
 		if err != nil {
 			continue
 		}
 		for _, r := range results {
 			if r.Score >= supersedesMinScore {
-				_ = in.Store.Delete(ctx, r.Item.ID)
+				_ = in.ItemStore.Delete(ctx, r.Item.ID)
 			}
 		}
 	}

@@ -38,8 +38,8 @@ type RetrieveContext struct {
 	SystemPrompt string
 	PromptParts  []string
 
-	Store        Store
-	HistoryStore core.Store
+	Store        core.MemoryItemStore // memory items (pinned, recall); may be nil
+	HistoryStore core.Store           // conversation history (threads, messages)
 	Embedder     core.EmbeddingProvider
 	Logger       *slog.Logger
 }
@@ -66,7 +66,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 		Task:         task,
 		Selected:     map[Kind][]MemoryItem{},
 		SystemPrompt: systemPrompt,
-		Store:        m.store,
+		Store:        m.itemStore,
 		HistoryStore: m.store,
 		Embedder:     m.embedding,
 		Logger:       m.logger,
@@ -112,7 +112,7 @@ func (m *AgentMemory) defaultRetrieveChain() []RetrieveProcessor {
 		EmbedInput{},
 		LoadHistory{Limit: m.maxHistory},
 	}
-	if m.store != nil {
+	if m.itemStore != nil {
 		chain = append(chain, LoadPinned{})
 		chain = append(chain, BatchedRecall{
 			Kinds: m.recallKinds,

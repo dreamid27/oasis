@@ -146,7 +146,7 @@ import (
     "github.com/nevindra/oasis/compaction"
 )
 
-// store implements memory.Store (e.g. store/sqlite or store/postgres).
+// store implements core.Store (e.g. store/sqlite or store/postgres).
 // embedder implements core.EmbeddingProvider.
 
 agent := oasis.NewLLMAgent("assistant", "helpful assistant", provider,
@@ -171,7 +171,7 @@ result, err := agent.Execute(ctx, core.AgentTask{
 
 What each option does:
 
-- `WithStore(store)` — wires conversation history and item persistence. Use a satellite (`store/sqlite`, `store/postgres`) rather than implementing `memory.Store` yourself.
+- `WithStore(store)` — wires conversation history and item persistence. Accepts any `core.Store`; if the store also implements `core.MemoryItemStore`, memory item features (recall, working memory) are enabled automatically.
 - `WithEmbedding(embedder)` — required for semantic recall, fact extraction, dedup, and semantic trimming. Omit if you only need raw history.
 - `WithMaxHistory(20)` — load the last 20 messages per thread; default is 10.
 - `WithSemanticRecall()` — surface relevant messages from the user's *other* threads, ranked by cosine similarity to the current input.

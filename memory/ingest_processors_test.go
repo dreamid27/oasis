@@ -94,8 +94,8 @@ func TestUpserter_WritesAllCandidates(t *testing.T) {
 			{ID: "a", Kind: KindFact, Content: "x"},
 			{ID: "b", Kind: KindFact, Content: "y"},
 		},
-		Store:  store,
-		Logger: discardLogger(),
+		ItemStore: store,
+		Logger:    discardLogger(),
 	}
 	if err := (Upserter{}).Process(context.Background(), in); err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestDeduper_SkipsWhenNoSupersedes(t *testing.T) {
 		Candidates: []MemoryItem{
 			{ID: "a", Kind: KindFact, Content: "fact", Tags: []string{"category:personal"}},
 		},
-		Store:     store,
+		ItemStore: store,
 		Embedding: &panicEmbedder{t: t},
 		Logger:    discardLogger(),
 	}

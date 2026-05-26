@@ -85,7 +85,7 @@ func TestParallelDispatch_DisabledIsSequential(t *testing.T) {
 	router := fakeParallelRouter(t, "a", "b")
 	net := New("team", "team", router,
 		WithChildren(a, b),
-		WithRouter(agent.WithLimits(agent.Limits{MaxParallelDispatch: 1})),
+		WithAgentOptions(agent.WithLimits(agent.Limits{MaxParallelDispatch: 1})),
 	)
 	if _, err := net.Execute(context.Background(), core.AgentTask{Input: "go"}); err != nil {
 		t.Fatalf("Execute: %v", err)

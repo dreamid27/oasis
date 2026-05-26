@@ -14,8 +14,5 @@ func TestFilter_ZeroValue(t *testing.T) {
 	}
 }
 
-// Compile-time assertion that the Store type composes core.Store and ItemStore.
-var _ Store = (interface {
-	core.Store
-	ItemStore
-})(nil)
+// Compile-time assertion that ItemStore is an alias for core.MemoryItemStore.
+var _ ItemStore = (core.MemoryItemStore)(nil)
