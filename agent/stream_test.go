@@ -691,7 +691,9 @@ type alwaysToolProvider struct {
 
 func (a *alwaysToolProvider) Name() string { return "always-tool" }
 func (a *alwaysToolProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	// If the last message looks like a forced-synthesis prompt, return text.
 	if len(req.Messages) > 0 {
 		last := req.Messages[len(req.Messages)-1]

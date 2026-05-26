@@ -53,9 +53,16 @@ func WithChildren(children ...core.Agent) Option {
 // when configured via WithConversationMemory, CrossThreadSearch, and WithUserMemory.
 type Network struct {
 	runtime.Runtime
-	mu               sync.RWMutex           // guards agents + sortedAgentNames
+	mu               sync.RWMutex           // guards agents + sortedAgentNames + toolDefsDirty + cachedBuildDefs
 	agents           map[string]agent.Agent // keyed by name
 	sortedAgentNames []string               // pre-sorted for deterministic tool ordering
+
+	// toolDefsDirty is set when membership changes (AddAgent/RemoveAgent).
+	// buildToolDefs checks this under mu and skips the allocation when clean.
+	// cachedBuildDefs holds the last result of buildToolDefsLocked; non-nil only
+	// after the first buildToolDefs call on the dynamic-tools path.
+	toolDefsDirty   bool
+	cachedBuildDefs []core.ToolDefinition
 
 	// pendingRouterOpts is non-nil only between Option application and
 	// runtime.Init. Released to nil immediately after BuildConfig consumes it.
@@ -312,10 +319,31 @@ func (n *Network) dispatchAgent(ctx context.Context, tc core.ToolCall, parentTas
 //
 // Public entry point: takes the read lock. Used as the prebuild callback by
 // the runtime's dynamic ResolveTools path.
+//
+// When membership is stable (!toolDefsDirty) and a cached result exists, the
+// cached slice is returned directly to avoid allocating on every Execute call.
+// When the membership changes (AddAgent/RemoveAgent), toolDefsDirty is set and
+// the next call rebuilds and re-caches under the write lock.
 func (n *Network) buildToolDefs(toolDefs []core.ToolDefinition) []core.ToolDefinition {
 	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.buildToolDefsLocked(toolDefs)
+	if !n.toolDefsDirty && n.cachedBuildDefs != nil {
+		cached := n.cachedBuildDefs
+		n.mu.RUnlock()
+		return cached
+	}
+	n.mu.RUnlock()
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	// Re-check under write lock: another goroutine may have rebuilt while we
+	// waited for the lock.
+	if !n.toolDefsDirty && n.cachedBuildDefs != nil {
+		return n.cachedBuildDefs
+	}
+	result := n.buildToolDefsLocked(toolDefs)
+	n.cachedBuildDefs = result
+	n.toolDefsDirty = false
+	return result
 }
 
 // buildToolDefsLocked is the lock-free body of buildToolDefs. Caller must

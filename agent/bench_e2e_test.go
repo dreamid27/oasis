@@ -21,7 +21,9 @@ type scriptedProvider struct {
 
 func (p *scriptedProvider) Name() string { return "scripted" }
 func (p *scriptedProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	resp := p.responses[p.idx]
 	p.idx++
 	return resp, nil

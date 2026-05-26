@@ -36,7 +36,9 @@ func (s *stubProvider) next() stubResult {
 }
 
 func (s *stubProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	r := s.next()
 	for _, tok := range r.tokens {
 		ch <- core.StreamEvent{Type: core.EventTextDelta, Content: tok}

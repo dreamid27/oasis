@@ -92,7 +92,9 @@ type callbackProvider struct {
 
 func (c *callbackProvider) Name() string { return c.name }
 func (c *callbackProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if c.onChat != nil {
 		c.onChat(req)
 	}
@@ -146,7 +148,9 @@ type capturedRequestProvider struct {
 
 func (p *capturedRequestProvider) Name() string { return p.name }
 func (p *capturedRequestProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
@@ -176,7 +180,9 @@ type twoIterProvider struct {
 }
 
 func (p *twoIterProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	n := len(p.reqs)
@@ -205,7 +211,9 @@ func (p *flakyProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch
 	p.mu.Unlock()
 	if fn != nil {
 		if err := fn(); err != nil {
-			close(ch)
+			if ch != nil {
+				close(ch)
+			}
 			return core.ChatResponse{}, err
 		}
 	}

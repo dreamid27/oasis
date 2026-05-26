@@ -18,7 +18,9 @@ type mockContextProvider struct {
 }
 
 func (m *mockContextProvider) ChatStream(_ context.Context, req oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	m.calls.Add(1)
 	if m.onChat != nil {
 		m.onChat()

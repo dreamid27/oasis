@@ -75,7 +75,9 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if m.idx >= len(m.responses) {
 		return core.ChatResponse{Content: "exhausted"}, nil
 	}

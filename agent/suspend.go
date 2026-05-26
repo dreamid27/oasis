@@ -139,7 +139,9 @@ func (e *ErrSuspended) ResumeStream(ctx context.Context, data json.RawMessage, c
 	e.mu.Unlock()
 
 	if fn == nil {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		return AgentResult{}, fmt.Errorf("ErrSuspended: resumeStream closure is nil (released, expired, or not supported)")
 	}
 	if onRel != nil {

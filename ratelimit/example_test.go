@@ -13,7 +13,9 @@ type passThroughProvider struct{}
 
 func (passThroughProvider) Name() string { return "example" }
 func (passThroughProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	return core.ChatResponse{Content: "ok"}, nil
 }
 

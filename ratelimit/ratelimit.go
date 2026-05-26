@@ -64,7 +64,9 @@ func (r *rateLimitProvider) Name() string { return r.inner.Name() }
 
 func (r *rateLimitProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
 	if err := r.waitForBudget(ctx); err != nil {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		return core.ChatResponse{}, err
 	}
 	resp, err := r.inner.ChatStream(ctx, req, ch)

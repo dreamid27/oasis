@@ -137,7 +137,9 @@ func TestForwardSubagentStreamFiltersEnvelopeEvents(t *testing.T) {
 
 	result, err := forwardSubagentStream(context.Background(), streamer, "sub",
 		AgentTask{Input: "go"}, ch, nopLogger)
-	close(ch)
+	if ch != nil {
+		close(ch)
+	}
 	wg.Wait()
 
 	if err != nil {
@@ -277,7 +279,9 @@ func TestDrainSubChDrainsChannel(t *testing.T) {
 	ch := make(chan core.StreamEvent, 10)
 	ch <- core.StreamEvent{Type: core.EventTextDelta, Content: "a"}
 	ch <- core.StreamEvent{Type: core.EventTextDelta, Content: "b"}
-	close(ch)
+	if ch != nil {
+		close(ch)
+	}
 
 	closed := false
 	safeClose := func() { closed = true }

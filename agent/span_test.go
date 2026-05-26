@@ -48,7 +48,11 @@ func (t *recordingTracer) names() []string {
 func TestIterationSpanCreated(t *testing.T) {
 	tracer := &recordingTracer{}
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{Content: "ok", FinishReason: core.FinishStop}, nil
 	})
 	a := New("t", "test", provider, WithTracer(tracer))
@@ -74,7 +78,11 @@ func TestIterationSpanCreated(t *testing.T) {
 func TestLLMGenerateSpanCreated(t *testing.T) {
 	tracer := &recordingTracer{}
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{Content: "ok", FinishReason: core.FinishStop}, nil
 	})
 	a := New("t", "test", provider, WithTracer(tracer))

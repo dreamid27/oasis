@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -14,7 +16,7 @@ import (
 )
 
 // loopState holds the mutable per-execution state shared across runIteration
-// calls.
+// calls. Pooled via loopStatePool to amortize allocation across Execute calls.
 type loopState struct {
 	messages                   []core.ChatMessage
 	messageRuneCount           int
@@ -37,6 +39,40 @@ type loopState struct {
 	iterations []core.IterationTrace
 
 	sources []core.Source
+}
+
+var loopStatePool = sync.Pool{New: func() any { return new(loopState) }}
+
+func acquireLoopState(messages []core.ChatMessage, messageRuneCount int, attachByteBudget int64, hasAgentTools bool, compressThreshold int, safeCloseCh func()) *loopState {
+	s := loopStatePool.Get().(*loopState)
+	s.messages = messages
+	s.messageRuneCount = messageRuneCount
+	s.attachByteBudget = attachByteBudget
+	s.hasAgentTools = hasAgentTools
+	s.compressThreshold = compressThreshold
+	s.safeCloseCh = safeCloseCh
+	return s
+}
+
+func releaseLoopState(s *loopState) {
+	s.messages = nil
+	s.totalUsage = core.Usage{}
+	s.steps = s.steps[:0]
+	s.lastAgentOutput = ""
+	s.lastThinking = ""
+	s.accumulatedAttachments = s.accumulatedAttachments[:0]
+	s.accumulatedAttachmentBytes = 0
+	s.attachByteBudget = 0
+	s.hasAgentTools = false
+	s.compressThreshold = 0
+	s.safeCloseCh = nil
+	s.lastWarnings = s.lastWarnings[:0]
+	s.lastProviderMeta = nil
+	s.files = s.files[:0]
+	s.iterations = s.iterations[:0]
+	s.sources = s.sources[:0]
+	s.messageRuneCount = 0
+	loopStatePool.Put(s)
 }
 
 // patchTerminal applies state-derived fields (usage, steps, warnings,
@@ -111,7 +147,7 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 		select {
 		case ch <- core.StreamEvent{
 			Type: core.EventIterationStart,
-			Name: strconv.Itoa(i),
+			Name: smallItoa(i),
 		}:
 		case <-ctx.Done():
 		}
@@ -374,11 +410,7 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 	}
 
 	// Execute tool calls in parallel.
-	toolNames := make([]string, len(resp.ToolCalls))
-	for ti, tc := range resp.ToolCalls {
-		toolNames[ti] = tc.Name
-	}
-	cfg.Logger.Info("dispatching tool calls", "agent", cfg.Name, "iteration", i, "tools", toolNames)
+	cfg.Logger.Info("dispatching tool calls", "agent", cfg.Name, "iteration", i, "tools", toolCallNames(resp.ToolCalls))
 	fileSinkCh, waitFileSink := newFileCapturingSink(ctx, ch, state)
 	iterCtx = contextWithStreamSink(iterCtx, fileSinkCh)
 	dispatchStart := time.Now()
@@ -390,9 +422,11 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 	waitFileSink()
 
 	// postProcessed holds the post-tool-processor-mutated result for each call.
-	// Built inside the loop below and consumed by the OnIterationComplete snapshot
-	// so the hook always sees the post-processed content.
-	postProcessed := make([]core.ToolResult, len(resp.ToolCalls))
+	// Only allocated when OnIterationComplete is set (the sole consumer).
+	var postProcessed []core.ToolResult
+	if cfg.OnIterationComplete != nil {
+		postProcessed = make([]core.ToolResult, len(resp.ToolCalls))
+	}
 
 	// Process results sequentially.
 	for j, tc := range resp.ToolCalls {
@@ -464,8 +498,9 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 			endIteration(ep, reason)
 			return terminateIteration(ctx, cfg, ch, state, reason, res, retErr)
 		}
-		// Record the post-processed result so OnIterationComplete sees mutated content.
-		postProcessed[j] = result
+		if postProcessed != nil {
+			postProcessed[j] = result
+		}
 
 		// Chunk large tool results transparently.
 		// Why: instead of hinting the LLM to call read_full_result, split the
@@ -584,7 +619,7 @@ func callLLM(fwdCtx, spanCtx context.Context, cfg *LoopConfig, req core.ChatRequ
 		wait()
 		streamed = true
 	} else {
-		resp, err = core.Chat(llmCtx, provider, req)
+		resp, err = provider.ChatStream(llmCtx, req, nil)
 		endLLMSpan()
 	}
 
@@ -776,11 +811,42 @@ func endIteration(ep iterEndParams, reason core.FinishReason) {
 		select {
 		case ep.ch <- core.StreamEvent{
 			Type:         core.EventIterationFinish,
-			Name:         strconv.Itoa(ep.i),
+			Name:         smallItoa(ep.i),
 			Duration:     dur,
 			FinishReason: reason,
 		}:
 		case <-ep.ctx.Done():
 		}
 	}
+}
+
+// smallInts holds pre-computed string representations of iteration indices.
+// Covers virtually all real agent runs (max 32 iterations).
+var smallInts [32]string
+
+func init() {
+	for i := range smallInts {
+		smallInts[i] = strconv.Itoa(i)
+	}
+}
+
+// smallItoa returns a pre-interned string for i < 32, falling back to
+// strconv.Itoa for larger values.
+func smallItoa(i int) string {
+	if i >= 0 && i < len(smallInts) {
+		return smallInts[i]
+	}
+	return strconv.Itoa(i)
+}
+
+// toolCallNames is a slog.LogValuer that lazily formats tool call names
+// without allocating a []string slice.
+type toolCallNames []core.ToolCall
+
+func (t toolCallNames) LogValue() slog.Value {
+	attrs := make([]slog.Attr, len(t))
+	for i, tc := range t {
+		attrs[i] = slog.String(smallItoa(i), tc.Name)
+	}
+	return slog.GroupValue(attrs...)
 }

@@ -18,7 +18,9 @@ type compactMockProvider struct {
 }
 
 func (m *compactMockProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	close(ch)
+	if ch != nil {
+		close(ch)
+	}
 	m.lastReq = req
 	if m.err != nil {
 		return core.ChatResponse{}, m.err

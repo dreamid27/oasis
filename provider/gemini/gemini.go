@@ -61,7 +61,9 @@ func (g *Gemini) Name() string { return "gemini" }
 // The channel is closed when streaming completes.
 // When req.Tools is non-empty, tool call arguments stream as EventToolCallDelta events.
 func (g *Gemini) ChatStream(ctx context.Context, req oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 
 	body, err := g.buildBody(req.Messages, req.Tools, req.ResponseSchema, req.GenerationParams)
 	if err != nil {
@@ -171,7 +173,9 @@ func (g *Gemini) processStreamChunk(jsonStr string, fullContent *strings.Builder
 	text := extractTextFromParsed(parsed)
 	if text != "" {
 		fullContent.WriteString(text)
-		ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: text}
+		if ch != nil {
+			ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: text}
+		}
 	}
 
 	// Extract attachments from inlineData parts.

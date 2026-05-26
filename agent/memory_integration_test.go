@@ -417,7 +417,9 @@ func (p *capturingProvider) firstCall() core.ChatRequest {
 }
 
 func (p *capturingProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.record(req)
 	if p.extractionResp != nil {
 		p.mu.Lock()

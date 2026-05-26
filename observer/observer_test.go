@@ -22,9 +22,11 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) ChatStream(_ context.Context, _ oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: "hello"}
-	ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: " world"}
-	close(ch)
+	if ch != nil {
+		ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: "hello"}
+		ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: " world"}
+		close(ch)
+	}
 	return m.chatResp, m.chatErr
 }
 
@@ -37,14 +39,15 @@ type mockProviderManyEvents struct {
 
 func (m *mockProviderManyEvents) Name() string { return m.name }
 func (m *mockProviderManyEvents) ChatStream(_ context.Context, _ oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	for i := range m.count {
-		select {
-		case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: string(rune('a' + i%26))}:
-		default:
-			// Channel full — stop sending to avoid blocking forever in tests.
+	if ch != nil {
+		for i := range m.count {
+			select {
+			case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: string(rune('a' + i%26))}:
+			default:
+			}
 		}
+		close(ch)
 	}
-	close(ch)
 	return m.chatResp, nil
 }
 

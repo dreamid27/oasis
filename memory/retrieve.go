@@ -72,7 +72,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 		Logger:       m.logger,
 	}
 
-	runRetrievePipeline(ctx, in, m.defaultRetrieveChain())
+	runRetrievePipeline(ctx, in, m.cachedRetrieveChain)
 
 	// Assemble final []core.ChatMessage.
 	//
@@ -88,7 +88,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 	// the system message. They are still authoritative content — the
 	// <context>...</context> wrapper signals to the LLM that this is retrieved
 	// context rather than user instruction.
-	var out []core.ChatMessage
+	out := make([]core.ChatMessage, 0, len(in.History)+3)
 	if strings.TrimSpace(systemPrompt) != "" {
 		out = append(out, core.SystemMessage(systemPrompt))
 	}

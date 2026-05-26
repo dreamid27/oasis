@@ -30,6 +30,8 @@ func (n *Network) AddAgent(child core.Agent) error {
 	if !n.HasDynamicTools() {
 		n.rebuildCachedToolDefsLocked()
 	}
+	// Mark the dynamic-path cache stale so the next Execute rebuilds it.
+	n.toolDefsDirty = true
 	return nil
 }
 
@@ -54,5 +56,7 @@ func (n *Network) RemoveAgent(name string) error {
 	if !n.HasDynamicTools() {
 		n.rebuildCachedToolDefsLocked()
 	}
+	// Mark the dynamic-path cache stale so the next Execute rebuilds it.
+	n.toolDefsDirty = true
 	return nil
 }

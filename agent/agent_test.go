@@ -74,9 +74,13 @@ func (m *mockProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch 
 	if m.onChat != nil {
 		m.onChat(&req)
 	}
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	resp := m.next()
-	ch <- core.StreamEvent{Type: core.EventTextDelta, Content: resp.Content}
+	if ch != nil {
+		ch <- core.StreamEvent{Type: core.EventTextDelta, Content: resp.Content}
+	}
 	return resp, nil
 }
 func (m *mockProvider) next() core.ChatResponse {
@@ -174,7 +178,9 @@ type errProvider struct {
 
 func (p *errProvider) Name() string { return p.name }
 func (p *errProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	return core.ChatResponse{}, p.err
 }
 
@@ -183,7 +189,9 @@ type ctxProvider struct{ name string }
 
 func (p *ctxProvider) Name() string { return p.name }
 func (p *ctxProvider) ChatStream(ctx context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	return core.ChatResponse{}, ctx.Err()
 }
 
@@ -868,7 +876,9 @@ func (s *sequentialCallbackProvider) next(req core.ChatRequest) core.ChatRespons
 	return resp
 }
 func (s *sequentialCallbackProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	return s.next(req), nil
 }
 

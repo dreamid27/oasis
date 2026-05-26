@@ -62,16 +62,16 @@ func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- cor
 
 	// Build initial messages (system prompt + user memory + history + user input).
 	// If ResumeMessages is set (suspend/resume), use those instead.
-	const preAllocPer = 8
-	const preAllocCeil = 2000
 	var messages []core.ChatMessage
 	if len(cfg.ResumeMessages) > 0 {
 		messages = cfg.ResumeMessages
 	} else {
 		initial := cfg.Mem.BuildMessages(ctx, cfg.Name, cfg.SystemPrompt, task)
-		preAllocCap := cfg.MaxIter * preAllocPer
-		if preAllocCap > preAllocCeil {
-			preAllocCap = preAllocCeil
+		var preAllocCap int
+		if len(cfg.Tools) == 0 {
+			preAllocCap = 2
+		} else {
+			preAllocCap = min(cfg.MaxIter*4, 200)
 		}
 		messages = make([]core.ChatMessage, len(initial), len(initial)+preAllocCap)
 		copy(messages, initial)
@@ -98,14 +98,8 @@ func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- cor
 		}
 	}
 
-	state := &loopState{
-		messages:          messages,
-		messageRuneCount:  messageRuneCount,
-		attachByteBudget:  attachByteBudget,
-		hasAgentTools:     hasAgentTools,
-		compressThreshold: cfg.CompressThreshold,
-		safeCloseCh:       safeCloseCh,
-	}
+	state := acquireLoopState(messages, messageRuneCount, attachByteBudget, hasAgentTools, cfg.CompressThreshold, safeCloseCh)
+	defer releaseLoopState(state)
 
 	for i := 0; i < cfg.MaxIter; i++ {
 		result := runIteration(ctx, cfg, task, ch, state, i)

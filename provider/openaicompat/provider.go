@@ -89,13 +89,17 @@ func (p *Provider) ChatStream(ctx context.Context, req oasis.ChatRequest, ch cha
 
 	resp, err := p.sendHTTP(ctx, body)
 	if err != nil {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		return oasis.ChatResponse{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		return oasis.ChatResponse{}, p.httpErr(resp)
 	}
 

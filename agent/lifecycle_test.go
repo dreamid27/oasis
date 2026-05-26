@@ -47,7 +47,9 @@ func TestLifecycleEnvelopeRunStart(t *testing.T) {
 	// Use a callbackProvider configured to return a simple "ok" response with
 	// no tool calls.
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		return core.ChatResponse{Content: "ok", FinishReason: core.FinishStop}, nil
 	})
 	a := New("t", "test", provider)
@@ -85,7 +87,9 @@ func TestLifecycleEnvelopeIterations(t *testing.T) {
 	// Provider returns a tool call on iteration 0, then "done" on iteration 1.
 	iter := 0
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-		close(ch)
+		if ch != nil {
+			close(ch)
+		}
 		i := iter
 		iter++
 		if i == 0 {
