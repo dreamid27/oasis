@@ -75,7 +75,7 @@ func main() {
 ### Memory & RAG
 
 - **Unified memory** — single `oasis.WithMemory(...)` entry point over a single `MemoryItem` model (facts, working memory, events, playbooks, reflections, summaries — discriminated by `Kind`). Replaces the older `WithUserMemory` + `WithHistory` split.
-- **Conversation history** — load/persist per thread with `memory.WithMaxHistory`. Cross-thread semantic recall with `memory.WithSemanticRecall` and `memory.WithSemanticRecallMinScore`.
+- **Conversation history** — load/persist per thread with `memory.WithHistory`. Cross-thread semantic recall with `memory.WithSemanticRecall` and `memory.WithSemanticRecallMinScore`.
 - **Long-term facts** — semantic deduplication, confidence decay, and contradiction supersession. Auto-extracted from each turn when enabled.
 - **Graph RAG** — LLM-based graph extraction during ingestion discovers 8 relationship types between chunks. `GraphRetriever` combines vector search with multi-hop BFS traversal.
 - **Hybrid retrieval** — `HybridRetriever` fuses vector search + FTS keyword search with Reciprocal Rank Fusion, parent-child chunk resolution, and optional LLM re-ranking.
@@ -84,7 +84,7 @@ func main() {
 
 ### Streaming & Events
 
-- **Full lifecycle envelope** — every run brackets with `EventRunStart` / `EventRunFinish`. Iterations bracket with `EventIterationStart` / `EventIterationFinish`. 20+ typed event kinds cover text deltas, reasoning, tool calls, structured object snapshots, suspend payloads, approval gates, warnings, and errors.
+- **Full lifecycle envelope** — every run brackets with `EventRunStart` / `EventRunFinish`. Iterations bracket with `EventIterationStart` / `EventIterationFinish`. 30 typed event kinds cover text deltas, reasoning, tool calls, structured object snapshots, suspend payloads, approval gates, warnings, and errors.
 - **Multi-reader stream wrapper** — `oasis.Subscribe(ctx, ag, task, opts...)` returns a `Stream` with blocking accessors (`Text()`, `ToolCalls()`, `Reasoning()`, `Object()`, `Result()`), live subscription via `Events()`, and filtered callbacks (`OnTextDelta`, `OnReasoningDelta`, `OnToolCall`).
 - **Typed object adapters** — `oasis.StreamObjectAs[T](stream)` for incremental partial-JSON snapshots; `oasis.ResultObjectAs[T](result)` for the final decoded object.
 - **Execution traces** — every `AgentResult` includes `Iterations []IterationTrace` with per-iteration timing, token usage (including cache metrics), finish reason, and inner tool-call traces. No OTel setup required.
@@ -160,7 +160,7 @@ Step types: `Step` (function), `AgentStep` (delegate to any `Agent`), `ForEach` 
 ### Streaming
 
 ```go
-ch := make(chan oasis.ChatStreamEvent, 64)
+ch := make(chan oasis.StreamEvent, 64)
 go func() {
     for ev := range ch {
         switch ev.Type {
@@ -200,9 +200,9 @@ h.Cancel()
 
 | Interface | Purpose |
 | --------- | ------- |
-| `core.Provider` | LLM backend — `Chat`, `ChatStream` |
+| `core.Provider` | LLM backend — `ChatStream`, `Name`. `core.Chat` is a convenience function |
 | `core.EmbeddingProvider` | Text-to-vector embedding |
-| `core.Store` | Persistence with vector search; capability interfaces (`KeywordSearcher`, `GraphStore`, `DocumentGetter`) discovered via type assertion |
+| `core.Store` | Persistence with vector search; capability interfaces (`KeywordSearcher`, `GraphStore`, `ScheduledActionStore`, `DocumentGetter`) discovered via type assertion |
 | `core.MemoryItemStore` | Unified persistent memory over `MemoryItem` |
 | `core.AnyTool` / `core.Tool[In, Out]` | Pluggable capability for LLM function calling — atomic (one tool, one operation) |
 | `core.Agent` | Composable work unit — `LLMAgent`, `Network`, `Workflow`, or custom. Single `Execute(ctx, task, ...RunOption)` method |
@@ -217,7 +217,7 @@ h.Cancel()
 | Component | Packages |
 | --------- | -------- |
 | **Providers** | `provider/gemini` (Google Gemini), `provider/openaicompat` (OpenAI, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, LM Studio, OpenRouter, Azure, and any OpenAI-compatible API). Anthropic native via `provider/openaicompat` with the Messages-API endpoint. |
-| **Storage** | `store/sqlite` (local, pure-Go, no CGO), `store/postgres` (PostgreSQL + pgvector). Both implement `Store`, `MemoryItemStore`, `GraphStore`, and `KeywordSearcher`. |
+| **Storage** | `store/sqlite` (local, pure-Go, no CGO), `store/postgres` (PostgreSQL + pgvector). Both implement `Store`, `MemoryItemStore`, `GraphStore`, `KeywordSearcher`, and `ScheduledActionStore`. |
 | **Tools** | `tools/data` (CSV/JSON transform), `tools/http` (typed fetch). Sandbox tools (`shell`, `code_execute`, `file_read`, `file_write`, `file_edit`, `browser`, `deliver_file`, MCP wrappers) are auto-registered via `agent.WithSandbox(sb, sandbox.Tools(sb)...)`. |
 | **Sandbox** | `sandbox` (interface + `Tools()`); implementations live in separate repos (e.g. [`oasis-sandbox-ix`](https://github.com/nevindra/oasis-sandbox-ix) — Docker-backed). |
 | **MCP** | `mcp` client over stdio + HTTP. Tools register under `mcp__<server>__<tool>` namespacing. Deferred-schema mode for many-server setups. File-based config loader at `mcp/config` (Claude Desktop schema compatible). |
@@ -240,7 +240,7 @@ Hybrid microkernel: a single curated root package (`github.com/nevindra/oasis`) 
 
 ```text
 oasis/
-|-- oasis.go                        # Curated public umbrella (137 LOC)
+|-- oasis.go                        # Curated public umbrella
 |-- doc.go                          # Top-level package documentation
 |-- batch.go                        # Batch primitives (BatchJob, BatchStats)
 |

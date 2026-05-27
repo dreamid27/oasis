@@ -103,11 +103,33 @@ func TestFunc_ErrorPropagation(t *testing.T) {
 		func(_ context.Context, _ struct{}) (string, error) { return "", sentinel })
 
 	res, err := tool.ExecuteRaw(context.Background(), json.RawMessage(`{}`))
-	if !errors.Is(err, sentinel) {
-		t.Errorf("Go error = %v, want sentinel", err)
+	if err != nil {
+		t.Errorf("non-InfraError must not propagate Go error, got %v", err)
 	}
 	if res.Error != "tool failed" {
 		t.Errorf("ToolResult.Error = %q", res.Error)
+	}
+}
+
+func TestFunc_InfraErrorPropagation(t *testing.T) {
+	sentinel := errors.New("network down")
+	tool := Func("infra-fail", "Fails with infra error",
+		func(_ context.Context, _ struct{}) (string, error) {
+			return "", InfraError(sentinel)
+		})
+
+	res, err := tool.ExecuteRaw(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("InfraError must propagate Go error, got nil")
+	}
+	if !IsInfraError(err) {
+		t.Errorf("Go error is not InfraError: %v", err)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("Go error does not unwrap to sentinel: %v", err)
+	}
+	if res.Error != "network down" {
+		t.Errorf("ToolResult.Error = %q, want %q", res.Error, "network down")
 	}
 }
 

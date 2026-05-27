@@ -53,7 +53,7 @@ func WithHistory(cfg HistoryConfig) Option {
 	}
 }
 
-// Deprecated: use WithHistory instead.
+// Deprecated: use WithHistory(HistoryConfig{MaxMessages: n}) instead.
 //
 // WithMaxHistory sets how many recent messages to load (default 10).
 func WithMaxHistory(n int) Option { return func(c *AgentMemoryConfig) { c.MaxHistory = n } }

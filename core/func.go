@@ -43,7 +43,11 @@ func (t *funcTool[In, Out]) ExecuteRaw(ctx context.Context, args json.RawMessage
 	}
 	out, err := t.fn(ctx, in)
 	if err != nil {
-		return ToolResult{Error: err.Error()}, err
+		result := ToolResult{Error: err.Error()}
+		if IsInfraError(err) {
+			return result, err
+		}
+		return result, nil
 	}
 	body, err := json.Marshal(out)
 	if err != nil {

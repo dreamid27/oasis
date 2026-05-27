@@ -6,6 +6,59 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-05-27
+
+DX and safety patch: fixes a semantic bug in `core.Func`/`core.Erase` error
+handling, documents the tool-error contract, and adds exhaustiveness helpers
+for stream event consumers.
+
+### Added
+
+- **`core.InfraError(err) error` + `core.IsInfraError(err) bool`.** Explicit
+  wrapper for infrastructure-level errors in tool callbacks. When a `Func` or
+  `Erase`-wrapped tool returns `InfraError(err)`, the Go error propagates to
+  the dispatch layer for retry/abort decisions. All other errors are treated
+  as tool-level failures visible to the LLM only.
+- **`core.AllStreamEventTypes() []StreamEventType`.** Returns every
+  `StreamEventType` constant defined by the framework. Enables exhaustiveness
+  tests that break on upgrade when new event types are added. Re-exported as
+  `oasis.AllStreamEventTypes`.
+
+### Changed
+
+- **BREAKING — `core.Func` and `core.Erase` no longer propagate callback
+  errors as Go errors.** Previously, when a tool callback returned a non-nil
+  error, both `ToolResult.Error` (LLM-visible) and the Go `error` return
+  (infrastructure) were set simultaneously. This caused routine tool failures
+  ("task not found", "invalid input") to be treated as infrastructure failures
+  by the agent loop — triggering retries or aborts instead of letting the LLM
+  adapt. Now, callback errors only set `ToolResult.Error` and return `nil` as
+  the Go error. Use `core.InfraError(err)` for the rare case where a tool
+  genuinely needs to signal infrastructure failure.
+  ```go
+  // Tool-level error (LLM sees it, loop continues) — default behavior:
+  return zero, fmt.Errorf("task not found")
+  // Infrastructure error (loop may retry/abort) — explicit opt-in:
+  return zero, core.InfraError(fmt.Errorf("database connection lost"))
+  ```
+- **`AnyTool.ExecuteRaw` now has a documented error contract.** Godoc on the
+  interface method specifies: set `ToolResult.Error` for tool failures, return
+  a Go error only for infrastructure failures (wrapped with `InfraError` when
+  using `Func`/`Erase`), never set both unless the Go error is an `InfraError`.
+
+### Fixed
+
+- **`memory.WithMaxHistory` deprecation notice** now mentions the replacement
+  field name: `use WithHistory(HistoryConfig{MaxMessages: n}) instead`.
+
+### Migration
+
+- **`Func`/`Erase` callback errors**: If your tool callback returns errors
+  that should abort or retry the agent loop (network failures, context
+  cancellation), wrap them with `core.InfraError(err)`. Routine tool errors
+  ("not found", "bad input") need no change — they now correctly stay in the
+  tool-result channel.
+
 ## [0.17.2] - 2026-05-27
 
 Performance release: 5-phase optimization pass across the entire framework.

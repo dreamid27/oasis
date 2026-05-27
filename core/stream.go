@@ -131,6 +131,45 @@ const (
 	EventProcessorSuspended StreamEventType = "processor-suspended"
 )
 
+// AllStreamEventTypes returns every StreamEventType constant defined by the
+// framework. Consumers can use this in tests to verify exhaustive handling
+// of event types across oasis upgrades.
+func AllStreamEventTypes() []StreamEventType {
+	return []StreamEventType{
+		EventTextDelta,
+		EventToolCallStart,
+		EventToolCallResult,
+		EventThinking,
+		EventAgentStart,
+		EventAgentFinish,
+		EventToolCallDelta,
+		EventToolProgress,
+		EventStepStart,
+		EventStepFinish,
+		EventStepProgress,
+		EventRoutingDecision,
+		EventFileAttachment,
+		EventMaxIterReached,
+		EventReasoningStart,
+		EventReasoningDelta,
+		EventReasoningEnd,
+		EventHalt,
+		EventError,
+		EventStreamWarning,
+		EventToolApprovalPending,
+		EventRunStart,
+		EventRunFinish,
+		EventIterationStart,
+		EventIterationFinish,
+		EventObjectDelta,
+		EventObjectFinish,
+		EventElementDelta,
+		EventToolCallSuspended,
+		EventStepSuspended,
+		EventProcessorSuspended,
+	}
+}
+
 // FinishReason describes why an agent run ended. It is carried on
 // EventRunFinish and on AgentResult.FinishReason.
 type FinishReason string

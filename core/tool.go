@@ -15,6 +15,16 @@ import (
 type AnyTool interface {
 	Name() string
 	Definition() ToolDefinition
+
+	// ExecuteRaw executes the tool with raw JSON arguments.
+	//
+	// Error handling contract:
+	//   - Set ToolResult.Error for tool-level failures (bad input, not found,
+	//     permission denied). The agent loop presents this to the LLM and continues.
+	//   - Return a Go error only for infrastructure failures (network down, context
+	//     cancelled). The agent loop may retry or abort. Wrap with [InfraError]
+	//     when using [Func] or type-erased tools.
+	//   - Never set both simultaneously unless the Go error is an [InfraError].
 	ExecuteRaw(ctx context.Context, args json.RawMessage) (ToolResult, error)
 }
 

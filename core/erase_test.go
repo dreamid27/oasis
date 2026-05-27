@@ -136,15 +136,15 @@ func TestErase_BadArgsLandInToolResult(t *testing.T) {
 	}
 }
 
-// TestErase_ExecuteErrorLandsInToolResult verifies that an error returned
-// from the typed Execute method lands in ToolResult.Error AND is also
-// propagated as a Go error (for retry policy inspection).
+// TestErase_ExecuteErrorLandsInToolResult verifies that a non-InfraError
+// returned from the typed Execute method lands in ToolResult.Error but does
+// NOT propagate as a Go error — tool-level failures are LLM-visible only.
 func TestErase_ExecuteErrorLandsInToolResult(t *testing.T) {
 	erased := Erase[echoInput, echoOutput](&echoTool{failOnExecute: true})
 	args, _ := json.Marshal(echoInput{Message: "boom"})
 	res, err := erased.ExecuteRaw(context.Background(), args)
-	if err == nil {
-		t.Fatalf("expected Go error to be propagated, got nil")
+	if err != nil {
+		t.Fatalf("non-InfraError must not propagate Go error, got %v", err)
 	}
 	if res.Error == "" {
 		t.Error("expected ToolResult.Error to be set")
@@ -317,15 +317,43 @@ func TestErase_HonorsOutSchemaProvider(t *testing.T) {
 	}
 }
 
-func TestErase_PropagatesExecuteError(t *testing.T) {
+func TestErase_ToolErrorDoesNotPropagateGoError(t *testing.T) {
 	tool := &echoTool{failOnExecute: true}
 	erased := Erase[echoInput, echoOutput](tool)
 	res, err := erased.ExecuteRaw(context.Background(), json.RawMessage(`{"message":"hi"}`))
-	if err == nil {
-		t.Fatal("expected non-nil Go error, got nil")
+	if err != nil {
+		t.Fatalf("non-InfraError must not propagate Go error, got %v", err)
 	}
 	if res.Error == "" {
-		t.Fatal("expected ToolResult.Error to also be populated")
+		t.Fatal("expected ToolResult.Error to be populated")
+	}
+}
+
+// infraEchoTool wraps echoTool but returns an InfraError from Execute.
+type infraEchoTool struct{}
+
+func (infraEchoTool) Definition() ToolMeta {
+	return ToolMeta{Name: "infra-echo", Description: "echoes or infra-fails"}
+}
+
+func (infraEchoTool) Execute(_ context.Context, in echoInput) (echoOutput, error) {
+	return echoOutput{}, InfraError(errors.New("network timeout"))
+}
+
+func TestErase_InfraErrorPropagatesGoError(t *testing.T) {
+	erased := Erase[echoInput, echoOutput](infraEchoTool{})
+	res, err := erased.ExecuteRaw(context.Background(), json.RawMessage(`{"message":"hi"}`))
+	if err == nil {
+		t.Fatal("InfraError must propagate Go error, got nil")
+	}
+	if !IsInfraError(err) {
+		t.Errorf("Go error is not InfraError: %v", err)
+	}
+	if res.Error == "" {
+		t.Fatal("expected ToolResult.Error to be populated")
+	}
+	if !strings.Contains(res.Error, "network timeout") {
+		t.Errorf("ToolResult.Error = %q, want it to contain 'network timeout'", res.Error)
 	}
 }
 

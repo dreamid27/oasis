@@ -40,10 +40,11 @@ func (e *erasedTool[In, Out]) ExecuteRaw(ctx context.Context, args json.RawMessa
 	}
 	out, err := e.tool.Execute(ctx, in)
 	if err != nil {
-		// Propagate the typed Go error so the dispatch policy wrapper can
-		// inspect it (Retryable, net.Error.Timeout(), context.DeadlineExceeded).
-		// ToolResult.Error remains populated for the LLM-visible string.
-		return ToolResult{Error: err.Error()}, err
+		result := ToolResult{Error: err.Error()}
+		if IsInfraError(err) {
+			return result, err
+		}
+		return result, nil
 	}
 	body, err := json.Marshal(out)
 	if err != nil {
@@ -88,10 +89,11 @@ func (e *erasedStreamingTool[In, Out]) ExecuteStream(ctx context.Context, args j
 	}
 	out, err := e.streamTool.ExecuteStream(ctx, in, ch)
 	if err != nil {
-		// Propagate the typed Go error so the dispatch policy wrapper can
-		// inspect it (Retryable, net.Error.Timeout(), context.DeadlineExceeded).
-		// ToolResult.Error remains populated for the LLM-visible string.
-		return ToolResult{Error: err.Error()}, err
+		result := ToolResult{Error: err.Error()}
+		if IsInfraError(err) {
+			return result, err
+		}
+		return result, nil
 	}
 	body, err := json.Marshal(out)
 	if err != nil {

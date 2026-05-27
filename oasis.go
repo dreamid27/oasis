@@ -160,6 +160,10 @@ var (
 	EventError           = core.EventError
 )
 
+// AllStreamEventTypes returns every StreamEventType constant defined by the
+// framework. See [core.AllStreamEventTypes].
+var AllStreamEventTypes = core.AllStreamEventTypes
+
 // --- Finish reasons ---
 
 var (
