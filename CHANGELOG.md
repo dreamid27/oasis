@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-05-27
+
+Performance release: 5-phase optimization pass across the entire framework.
+Headline numbers vs v0.17.1 baseline: 8.4x faster single-turn latency,
+50x less memory per call, 72x faster large-input scanning.
+
 ### Added
 
 - **End-to-end benchmark suite.** Comprehensive benchmarks measuring framework
@@ -14,11 +20,114 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
   and memory operations. Run with `go test -bench=. -benchmem ./agent/ ./network/ ./memory/`.
 - **`benchmark.md`** — documented results, how-to-run instructions, and
   performance analysis.
+- **`core.ScheduledActionStore` interface.** Extracted from `Store` as an
+  optional capability discovered via type assertion. Stores that support
+  scheduled actions implement this alongside `Store`.
+- **`memory.HistoryConfig` + `memory.WithHistory(HistoryConfig)`.** One-call
+  configuration for history loading and trimming, replacing five individual
+  options (`WithMaxHistory`, `WithMaxTokens`, `WithSemanticTrimming`,
+  `WithSemanticTrimEmbedding`, `WithKeepRecent`). The individual options
+  are deprecated but still work.
+- **`network.RestartOnFail` backoff delay.** Optional second argument:
+  `RestartOnFail(3, 500*time.Millisecond)`. Delay is context-aware —
+  cancelled contexts abort the backoff immediately.
+- Umbrella re-export: `oasis.ScheduledActionStore`.
+
+### Changed
+
+- **BREAKING — `ToolResult.Content` is now `string`** (was
+  `json.RawMessage`). Eliminates 4 type round-trips per tool call in the
+  hot path. `TextContent` and `JSONContent` return `string`.
+  `ToolResultStore.Put`/`Get` use `string`. `ToolResult.Text()` is now a
+  trivial field accessor.
+  ```go
+  // Before
+  result := core.ToolResult{Content: json.RawMessage(`"hello"`)}
+  // After
+  result := core.ToolResult{Content: "hello"}
+  // Or use the unchanged helper:
+  result := core.TextResult("hello")
+  ```
+- **BREAKING — `core.Store` interface shrunk** (25 → 17 methods).
+  Eight `ScheduledAction*` methods extracted to the new
+  `core.ScheduledActionStore` opt-in interface. Store implementations
+  that had these methods must now also declare
+  `var _ core.ScheduledActionStore = (*MyStore)(nil)`. Callers discover
+  the capability via type assertion. The `store/sqlite` and
+  `store/postgres` backends implement both interfaces.
+- **BREAKING — `core.JSONResult` is now generic:** `JSONResult[T any](v T)`
+  instead of `JSONResult(v any)`. Existing calls compile unchanged; the
+  type parameter is inferred.
+- **BREAKING — `network.RestartOnFail` signature changed:**
+  `RestartOnFail(maxRestarts int, delay ...time.Duration)`. Existing
+  single-argument calls compile unchanged.
+- **`Provider.ChatStream` nil-channel contract.** `ch` may now be `nil`
+  for non-streaming calls (the `core.Chat` helper passes `nil`). When
+  `nil`, implementations must not send to or close `ch`. This eliminates
+  a goroutine + channel allocation per non-streaming `Execute` call.
+  Provider implementations already guarding sends with `if ch != nil`
+  need no change.
+- **Performance: zero-alloc core path.** Nil-channel `ChatStream`
+  eliminates goroutine for non-streaming `Execute`. `sync.Pool` for
+  `loopState` reuses the hot struct across calls. Smart message
+  pre-allocation scales capacity by tool count. Network caches tool defs
+  via dirty-bit. Memory caches retrieve/ingest chains at `Init`.
+  Iteration-index strings interned for i < 32.
+- **Performance: hot-path guards.** `slog.Enabled()` guards on 19 log
+  sites in the iteration loop. `RuneCount` skip when
+  `CompressThreshold == 0` (eliminates O(n) prompt scanning — 72x
+  improvement on 100 KB inputs). Cached `DispatchFunc` and method
+  values at construction. `retryProvider` nil-channel path.
+- **Performance: `splitContentRunes` rewritten with byte-scanning.**
+  Eliminates `[]rune` explosion — 4 MB → 0 for 1 MB payloads (9.1x
+  memory reduction on large tool results).
+- **Performance: streaming buffer reduction.** Streaming forwarder
+  buffer 64 → 1 (saves 16 KB per forwarder). `retryProvider` streaming
+  buffer 64 → 1. `onceClose` moved to pooled `loopState`.
+- `agentTool.ExecuteRaw` now distinguishes business errors (returned as
+  `ToolResult.Error` to the LLM) from infrastructure errors (returned as
+  Go `error` to the caller). Previously all errors were flattened.
+- `classifyAgent` now returns `KindUnknown` for custom `core.Agent`
+  implementations instead of misclassifying them as a built-in kind.
+
+### Deprecated
+
+- **`memory.WithMaxHistory`**, **`WithMaxTokens`**,
+  **`WithSemanticTrimming`**, **`WithSemanticTrimEmbedding`**,
+  **`WithKeepRecent`** — use `memory.WithHistory(HistoryConfig{...})`
+  instead. The old options still work.
+
+### Removed
+
+- **`core.TextContent` function.** With `ToolResult.Content` as
+  `string`, `TextContent` was an identity function. Use string
+  values directly or `core.TextResult` for a full `ToolResult`.
+- **`memory.WithDecayInterval` stub.** Was reserved for future use and
+  did nothing.
 
 ### Fixed
 
 - **`agent/memory_integration_test.go` compile error.** Updated stale
   `memory.Store` type assertion to `core.Store` + `memory.ItemStore`.
+- **`WithSemanticTrimming` was not wired to implementation.** The option
+  set the config flag but the actual `trimHistorySemantic` function was
+  never called. Now wired correctly.
+- **14 redundant copy lines in iteration end-path** collapsed.
+  Three-way LLM response branch simplified (−30 lines).
+
+### Migration
+
+- **`ToolResult.Content`**: Replace `json.RawMessage` literals with
+  plain strings. Replace `json.Unmarshal(result.Content, &s)` with
+  `result.Content` or `result.Text()`. Replace `TextContent(s)` with
+  `s`. Replace `JSONContent(raw)` with `string(raw)`.
+- **`Store` implementations**: If your store implemented the 8
+  `ScheduledAction*` methods, add a `ScheduledActionStore` interface
+  assertion. If it did not (no-op stubs to satisfy the interface), delete
+  the stubs — `Store` no longer requires them.
+- **`memory.WithHistory`**: Optional consolidation — replace chains like
+  `WithMaxHistory(20), WithMaxTokens(4000), WithSemanticTrimming()` with
+  `WithHistory(HistoryConfig{MaxMessages: 20, MaxTokens: 4000, Semantic: true})`.
 
 ## [0.17.1] - 2026-05-26
 
