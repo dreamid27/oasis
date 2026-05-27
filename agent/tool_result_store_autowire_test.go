@@ -17,7 +17,7 @@ func TestToolResultStoreDefaultAutoWired(t *testing.T) {
 		t.Fatal("expected non-nil default ToolResultStore; got nil")
 	}
 	// Verify the store is functional (Put/Get round-trip).
-	id, err := store.Put(context.Background(), core.TextContent("test"))
+	id, err := store.Put(context.Background(), "test")
 	if err != nil {
 		t.Fatalf("default store Put failed: %v", err)
 	}

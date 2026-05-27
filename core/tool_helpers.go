@@ -5,10 +5,6 @@ import (
 	"encoding/json"
 )
 
-// TextContent returns s as-is. Exists for backward compatibility with code
-// that builds ToolResult.Content by hand.
-func TextContent(s string) string { return s }
-
 // JSONContent converts pre-encoded JSON bytes to a string for ToolResult.Content.
 func JSONContent(raw []byte) string { return string(raw) }
 
@@ -20,7 +16,7 @@ func TextResult(s string) ToolResult {
 // JSONResult marshals v to JSON and returns a ToolResult with the encoded string
 // as Content. Panics if json.Marshal fails — a marshal failure on a value the
 // caller constructs is a programming error, not a runtime condition.
-func JSONResult(v any) ToolResult {
+func JSONResult[T any](v T) ToolResult {
 	b, err := json.Marshal(v)
 	if err != nil {
 		panic("core.JSONResult: json.Marshal failed: " + err.Error())

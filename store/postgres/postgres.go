@@ -87,6 +87,7 @@ var _ oasis.GraphStore = (*Store)(nil)
 var _ oasis.BidirectionalGraphStore = (*Store)(nil)
 var _ oasis.CheckpointStore = (*Store)(nil)
 var _ oasis.DocumentMetaLister = (*Store)(nil)
+var _ oasis.ScheduledActionStore = (*Store)(nil)
 
 // nopLogger is a logger that discards all output.
 var nopLogger = slog.New(pgDiscardHandler{})

@@ -27,9 +27,9 @@ func TestJSONContentPreservesBytes(t *testing.T) {
 }
 
 func TestToolResultContentRoundTrip(t *testing.T) {
-	// A ToolResult with TextContent("hi") should marshal with "hi" as the
+	// A ToolResult with Content "hi" should marshal with "hi" as the
 	// content value (a JSON string literal), not double-encoded bytes.
-	r := core.ToolResult{Content: core.TextContent("hi")}
+	r := core.ToolResult{Content: "hi"}
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)

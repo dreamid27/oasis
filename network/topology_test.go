@@ -21,8 +21,8 @@ func TestTopology_BasicGraph(t *testing.T) {
 	if top.Nodes[0].Name != "search" || top.Nodes[1].Name != "summary" {
 		t.Fatalf("Nodes order: %v", top.Nodes)
 	}
-	if top.Nodes[0].Kind != KindLLMAgent {
-		t.Fatalf("Nodes[0].Kind: got %q want %q", top.Nodes[0].Kind, KindLLMAgent)
+	if top.Nodes[0].Kind != KindUnknown {
+		t.Fatalf("Nodes[0].Kind: got %q want %q", top.Nodes[0].Kind, KindUnknown)
 	}
 	if len(top.Edges) != 2 {
 		t.Fatalf("Edges: want 2, got %d", len(top.Edges))

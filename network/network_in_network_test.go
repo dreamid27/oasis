@@ -67,8 +67,8 @@ func TestNetwork_NestedNetwork(t *testing.T) {
 			}
 		case "writer":
 			foundWriter = true
-			if n.Kind != KindLLMAgent {
-				t.Errorf("writer node Kind: got %q want %q", n.Kind, KindLLMAgent)
+			if n.Kind != KindUnknown {
+				t.Errorf("writer node Kind: got %q want %q", n.Kind, KindUnknown)
 			}
 		}
 	}

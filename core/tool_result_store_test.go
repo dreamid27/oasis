@@ -41,23 +41,23 @@ var _ core.ToolResultStore = (*stubResultStore)(nil)
 
 func TestToolResultStoreInterface(t *testing.T) {
 	s := &stubResultStore{data: map[string]string{}}
-	id, err := s.Put(context.Background(), core.TextContent("hello world"))
+	id, err := s.Put(context.Background(), "hello world")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, total, err := s.Get(context.Background(), id, 0, len(core.TextContent("hello world")))
+	raw, total, err := s.Get(context.Background(), id, 0, len("hello world"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != len(core.TextContent("hello world")) {
-		t.Errorf("got total=%d, want %d", total, len(core.TextContent("hello world")))
+	if total != len("hello world") {
+		t.Errorf("got total=%d, want %d", total, len("hello world"))
 	}
 	_ = raw
 }
 
 func TestInMemoryStorePutGetRoundTrip(t *testing.T) {
 	s := core.NewInMemoryToolResultStore()
-	content := core.TextContent("the quick brown fox")
+	content := "the quick brown fox"
 	id, err := s.Put(context.Background(), content)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestInMemoryStoreByteSlicing(t *testing.T) {
 
 func TestInMemoryStoreOffsetPastEnd(t *testing.T) {
 	s := core.NewInMemoryToolResultStore()
-	id, _ := s.Put(context.Background(), core.TextContent("abc"))
+	id, _ := s.Put(context.Background(), "abc")
 	raw, total, err := s.Get(context.Background(), id, 1000, 5)
 	if err != nil {
 		t.Fatal(err)
@@ -104,8 +104,8 @@ func TestInMemoryStoreOffsetPastEnd(t *testing.T) {
 	if raw != "" {
 		t.Errorf("expected empty string, got %q", raw)
 	}
-	if total != len(core.TextContent("abc")) {
-		t.Errorf("got total=%d, want %d", total, len(core.TextContent("abc")))
+	if total != len("abc") {
+		t.Errorf("got total=%d, want %d", total, len("abc"))
 	}
 }
 
@@ -119,7 +119,7 @@ func TestInMemoryStoreUnknownID(t *testing.T) {
 
 func TestInMemoryStoreTTLEviction(t *testing.T) {
 	s := core.NewInMemoryToolResultStore(core.WithToolResultTTL(50 * time.Millisecond))
-	id, _ := s.Put(context.Background(), core.TextContent("hello"))
+	id, _ := s.Put(context.Background(), "hello")
 	time.Sleep(80 * time.Millisecond)
 	_, _, err := s.Get(context.Background(), id, 0, 5)
 	if !errors.Is(err, core.ErrToolResultNotFound) {
@@ -151,7 +151,7 @@ func TestInMemoryStoreConcurrentPut(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			id, err := s.Put(context.Background(), core.TextContent(fmt.Sprintf("payload-%d", i)))
+			id, err := s.Put(context.Background(), fmt.Sprintf("payload-%d", i))
 			if err != nil {
 				t.Error(err)
 				return

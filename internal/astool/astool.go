@@ -77,7 +77,7 @@ func (t *agentTool) ExecuteRaw(ctx context.Context, args json.RawMessage) (core.
 	}
 	res, err := t.ag.Execute(ctx, core.AgentTask{Input: p.Task})
 	if err != nil {
-		return core.ToolResult{Error: err.Error()}, err
+		return core.ToolResult{Error: err.Error()}, nil
 	}
-	return core.ToolResult{Content: core.TextContent(res.Output)}, nil
+	return core.ToolResult{Content: res.Output}, nil
 }

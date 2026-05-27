@@ -41,3 +41,17 @@ type DocumentGetter interface {
 type DocumentMetaLister interface {
 	ListDocumentMeta(ctx context.Context, limit int) ([]Document, error)
 }
+
+// ScheduledActionStore is an optional Store capability for scheduled actions.
+// Store implementations that support scheduling can implement this interface;
+// callers discover it via type assertion.
+type ScheduledActionStore interface {
+	CreateScheduledAction(ctx context.Context, action ScheduledAction) error
+	ListScheduledActions(ctx context.Context) ([]ScheduledAction, error)
+	GetDueScheduledActions(ctx context.Context, now int64) ([]ScheduledAction, error)
+	UpdateScheduledAction(ctx context.Context, action ScheduledAction) error
+	UpdateScheduledActionEnabled(ctx context.Context, id string, enabled bool) error
+	DeleteScheduledAction(ctx context.Context, id string) error
+	DeleteAllScheduledActions(ctx context.Context) (int, error)
+	FindScheduledActionsByDescription(ctx context.Context, pattern string) ([]ScheduledAction, error)
+}

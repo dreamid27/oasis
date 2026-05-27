@@ -136,7 +136,21 @@ func (m *AgentMemory) defaultRetrieveChain() []RetrieveProcessor {
 		chain = append(chain, RecallCrossThread{MinScore: m.semanticMinScore})
 	}
 	if m.maxTokens > 0 {
-		chain = append(chain, TrimToBudget{Budget: m.maxTokens, Semantic: m.semanticTrimming})
+		trimProc := TrimToBudget{
+			Budget:     m.maxTokens,
+			Semantic:   m.semanticTrimming,
+			KeepRecent: m.keepRecent,
+		}
+		if m.semanticTrimming {
+			// Use the dedicated trimming embedder if set, else fall back to the main one.
+			trimProc.Embedder = m.trimmingEmbedding
+			if trimProc.Embedder == nil {
+				trimProc.Embedder = m.embedding
+			}
+			m.initTrimCache()
+			trimProc.TrimCache = m.trimCache
+		}
+		chain = append(chain, trimProc)
 	}
 	chain = append(chain, m.retrieveProcs...)
 	return chain

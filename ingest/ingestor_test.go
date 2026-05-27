@@ -65,22 +65,9 @@ func (s *mockStore) UpdateThread(context.Context, oasis.Thread) error { return n
 func (s *mockStore) DeleteThread(context.Context, string) error       { return nil }
 func (s *mockStore) GetConfig(context.Context, string) (string, error) { return "", nil }
 func (s *mockStore) SetConfig(context.Context, string, string) error   { return nil }
-func (s *mockStore) Init(context.Context) error                        { return nil }
-func (s *mockStore) Close() error                                      { return nil }
-func (s *mockStore) CreateScheduledAction(context.Context, oasis.ScheduledAction) error { return nil }
-func (s *mockStore) ListScheduledActions(context.Context) ([]oasis.ScheduledAction, error) {
-	return nil, nil
-}
-func (s *mockStore) GetDueScheduledActions(context.Context, int64) ([]oasis.ScheduledAction, error) {
-	return nil, nil
-}
-func (s *mockStore) UpdateScheduledAction(context.Context, oasis.ScheduledAction) error { return nil }
-func (s *mockStore) UpdateScheduledActionEnabled(context.Context, string, bool) error   { return nil }
-func (s *mockStore) DeleteScheduledAction(context.Context, string) error                { return nil }
-func (s *mockStore) DeleteAllScheduledActions(context.Context) (int, error)             { return 0, nil }
-func (s *mockStore) FindScheduledActionsByDescription(context.Context, string) ([]oasis.ScheduledAction, error) {
-	return nil, nil
-}
+func (s *mockStore) Init(context.Context) error { return nil }
+func (s *mockStore) Close() error               { return nil }
+
 // --- tests ---
 
 func TestIngestorIngestText(t *testing.T) {

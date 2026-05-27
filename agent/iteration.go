@@ -174,15 +174,10 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 			core.BoolAttr("has_tools", len(cfg.Tools) > 0))
 	}
 
-	var llmTrace core.LLMCallTrace
-	llmModel := cfg.Provider.Name()
-	llmCalled := false
-
 	// ep bundles iteration-end context as explicit parameters so endIteration
-	// can be called directly without forming a heap-escaping closure. The three
-	// mutable fields (llmCalled, llmModel, llmTrace) are written into ep
-	// immediately before each endIteration call so callers always see the
-	// current values.
+	// can be called directly without forming a heap-escaping closure.
+	// The three mutable fields (llmCalled, llmModel, llmTrace) are written
+	// directly on ep throughout the function — no separate locals needed.
 	ep := iterEndParams{
 		iterStart: iterStart,
 		i:         i,
@@ -190,6 +185,7 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 		iterSpan:  iterSpan,
 		ch:        ch,
 		ctx:       ctx,
+		llmModel:  cfg.Provider.Name(),
 	}
 
 	req := core.ChatRequest{Messages: state.messages, ResponseSchema: cfg.ResponseSchema, GenerationParams: cfg.GenParams}
@@ -211,7 +207,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 				case <-ctx.Done():
 				}
 			}
-			ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 			endIteration(ep, core.FinishSuspended)
 			return terminateIteration(ctx, cfg, ch, state, core.FinishSuspended, AgentResult{SuspendPayload: s.Payload, SuspendProtocol: s.tag}, s)
 		}
@@ -220,7 +215,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 		if res.Output != "" {
 			reason = core.FinishHalted
 		}
-		ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 		endIteration(ep, reason)
 		return terminateIteration(ctx, cfg, ch, state, reason, res, retErr)
 	}
@@ -239,13 +233,12 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 			if cfg.Logger.Enabled(iterCtx, slog.LevelError) {
 				cfg.Logger.Error("PrepareStep hook failed", "agent", cfg.Name, "iteration", i, "error", err)
 			}
-			ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 			endIteration(ep, core.FinishError)
 			return terminateIteration(ctx, cfg, ch, state, core.FinishError, AgentResult{}, fmt.Errorf("PrepareStep: %w", err))
 		}
 		if ctrl.Model != nil {
 			iterProvider = ctrl.Model
-			llmModel = iterProvider.Name()
+			ep.llmModel = iterProvider.Name()
 		}
 		if ctrl.Tools != nil {
 			defs := make([]core.ToolDefinition, len(ctrl.Tools))
@@ -263,34 +256,22 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 	// markers via openaicompat.WithCacheControl directly.
 	applyPromptCacheMarkers(req.Messages, cfg.DisablePromptCaching)
 
-	if len(req.Tools) > 0 && ch != nil && !state.hasAgentTools {
-		if cfg.Logger.Enabled(ctx, slog.LevelDebug) {
-			cfg.Logger.Debug("calling LLM (streaming, with tools)", "agent", cfg.Name, "iteration", i, "tool_count", len(req.Tools))
-		}
-		resp, llmTrace, _, err = callLLM(ctx, iterCtx, cfg, req, iterProvider, ch, state, llmModel, true)
-		llmCalled = true
-		streamedThisIter = true
-	} else if len(req.Tools) > 0 {
-		if cfg.Logger.Enabled(ctx, slog.LevelDebug) {
-			cfg.Logger.Debug("calling LLM (with tools)", "agent", cfg.Name, "iteration", i, "tool_count", len(req.Tools))
-		}
-		resp, llmTrace, _, err = callLLM(ctx, iterCtx, cfg, req, iterProvider, nil, state, llmModel, false)
-		llmCalled = true
-	} else {
-		useStream := ch != nil
-		if cfg.Logger.Enabled(ctx, slog.LevelDebug) {
-			cfg.Logger.Debug("calling LLM (no tools)", "agent", cfg.Name, "iteration", i, "streaming", useStream)
-		}
-		resp, llmTrace, _, err = callLLM(ctx, iterCtx, cfg, req, iterProvider, ch, state, llmModel, useStream)
-		streamedThisIter = useStream
-		llmCalled = true
+	useStream := ch != nil && (len(req.Tools) == 0 || !state.hasAgentTools)
+	passCh := ch
+	if len(req.Tools) > 0 && !useStream {
+		passCh = nil
 	}
+	if cfg.Logger.Enabled(ctx, slog.LevelDebug) {
+		cfg.Logger.Debug("calling LLM", "agent", cfg.Name, "iteration", i, "streaming", useStream, "tool_count", len(req.Tools))
+	}
+	resp, ep.llmTrace, _, err = callLLM(ctx, iterCtx, cfg, req, iterProvider, passCh, state, ep.llmModel, useStream)
+	ep.llmCalled = true
+	streamedThisIter = useStream
 
 	if err != nil {
 		if cfg.Logger.Enabled(ctx, slog.LevelError) {
-			cfg.Logger.Error("LLM call failed", "agent", cfg.Name, "iteration", i, "error", err, "duration", llmTrace.Duration)
+			cfg.Logger.Error("LLM call failed", "agent", cfg.Name, "iteration", i, "error", err, "duration", ep.llmTrace.Duration)
 		}
-		ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 		endIteration(ep, core.FinishError)
 		if r, handled := handleOnError(iterCtx, cfg, state, i, err); handled {
 			if r.outcome == iterDone {
@@ -302,7 +283,7 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 	}
 	if cfg.Logger.Enabled(ctx, slog.LevelDebug) {
 		cfg.Logger.Debug("LLM call completed", "agent", cfg.Name, "iteration", i,
-			"duration", llmTrace.Duration,
+			"duration", ep.llmTrace.Duration,
 			"input_tokens", resp.Usage.InputTokens,
 			"output_tokens", resp.Usage.OutputTokens,
 			"tool_calls", len(resp.ToolCalls))
@@ -313,7 +294,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 	captureProviderMeta(state, &resp)
 
 	// PostProcessor hook.
-	ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 	if r, handled := runPostLLMOrHandle(ctx, iterCtx, cfg, task, ch, state, &resp, ep); handled {
 		return r
 	}
@@ -361,12 +341,10 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 			}
 			decision, hookErr := cfg.OnIterationComplete(iterCtx, i, snap)
 			if hookErr != nil {
-				ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 				endIteration(ep, core.FinishError)
 				return terminateIteration(ctx, cfg, ch, state, core.FinishError, AgentResult{}, fmt.Errorf("OnIterationComplete: %w", hookErr))
 			}
 			if decision.IsStop() {
-				ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 				return finalizeIterationStop(ctx, cfg, ch, state, decision, ep)
 			}
 			if decision.IsInject() {
@@ -376,14 +354,12 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 						state.messageRuneCount += utf8.RuneCountInString(m.Content)
 					}
 				}
-				ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 				endIteration(ep, core.FinishStop)
 				return iterationResult{outcome: iterContinue}
 			}
 			// Continue: fall through to natural iterDone.
 		}
 
-		ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 		endIteration(ep, core.FinishStop)
 		cfg.Mem.PersistTurn(iterCtx, cfg.Name, task, task.Input, content, state.steps)
 		result := AgentResult{
@@ -527,7 +503,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 					case <-ctx.Done():
 					}
 				}
-				ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 				endIteration(ep, core.FinishSuspended)
 				return terminateIteration(ctx, cfg, ch, state, core.FinishSuspended, AgentResult{SuspendPayload: s.Payload, SuspendProtocol: s.tag}, s)
 			}
@@ -536,7 +511,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 			if res.Output != "" {
 				reason = core.FinishHalted
 			}
-			ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 			endIteration(ep, reason)
 			return terminateIteration(ctx, cfg, ch, state, reason, res, retErr)
 		}
@@ -611,12 +585,10 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 		}
 		decision, hookErr := cfg.OnIterationComplete(iterCtx, i, snap)
 		if hookErr != nil {
-			ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 			endIteration(ep, core.FinishError)
 			return terminateIteration(ctx, cfg, ch, state, core.FinishError, AgentResult{}, fmt.Errorf("OnIterationComplete: %w", hookErr))
 		}
 		if decision.IsStop() {
-			ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 			return finalizeIterationStop(ctx, cfg, ch, state, decision, ep)
 		}
 		if decision.IsInject() {
@@ -630,7 +602,6 @@ func runIteration(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<
 		// Continue: fall through to normal continuation
 	}
 
-	ep.llmCalled, ep.llmModel, ep.llmTrace = llmCalled, llmModel, llmTrace
 	endIteration(ep, core.FinishToolCalls)
 	return iterationResult{outcome: iterContinue}
 }

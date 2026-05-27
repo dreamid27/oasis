@@ -41,8 +41,8 @@ func TestWrap_ExecuteForwardsTaskToChild(t *testing.T) {
 	if f.called != "hello world" {
 		t.Fatalf("child not called with task: got %q", f.called)
 	}
-	want := []byte(`"summary of: hello world"`)
-	if string(res.Content) != string(want) {
+	want := "summary of: hello world"
+	if res.Content != want {
 		t.Fatalf("ExecuteRaw content: got %q want %q", res.Content, want)
 	}
 }
