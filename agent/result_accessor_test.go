@@ -91,7 +91,7 @@ func TestAgentResultWarningsAccumulateAcrossIterations(t *testing.T) {
 		}, nil
 	})
 	noop := newFnTool("noop", func(ctx context.Context, args json.RawMessage) (core.ToolResult, error) {
-		return core.ToolResult{Content: []byte(`"ok"`)}, nil
+		return core.ToolResult{Content: "ok"}, nil
 	})
 	a := New("t", "test", provider, WithTools(noop))
 	result, err := a.Execute(context.Background(), AgentTask{Input: "x"})

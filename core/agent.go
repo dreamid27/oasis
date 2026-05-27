@@ -270,9 +270,9 @@ func (r AgentResult) ToolResults() []ToolResult {
 	}
 	out := make([]ToolResult, 0, len(r.Steps))
 	for _, s := range r.Steps {
-		content := []byte(s.RawOutput)
-		if content == nil {
-			content = []byte(s.Output)
+		content := string(s.RawOutput)
+		if content == "" {
+			content = s.Output
 		}
 		out = append(out, ToolResult{Content: content})
 	}

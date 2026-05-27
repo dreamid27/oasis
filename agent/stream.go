@@ -251,8 +251,8 @@ func newStreamForwarder(ctx context.Context, dest chan<- core.StreamEvent, bufSi
 // newCapturingStreamForwarder is like newStreamForwarder but also captures
 // EventFileAttachment events into state.files. Used for provider streaming paths
 // where the provider may emit EventFileAttachment alongside text deltas.
-func newCapturingStreamForwarder(ctx context.Context, dest chan<- core.StreamEvent, bufSize int, state *loopState) (chan<- core.StreamEvent, func()) {
-	ch, wait := newForwarder(ctx, dest, bufSize, forwarderConfig{
+func newCapturingStreamForwarder(ctx context.Context, dest chan<- core.StreamEvent, _ int, state *loopState) (chan<- core.StreamEvent, func()) {
+	ch, wait := newForwarder(ctx, dest, 1, forwarderConfig{
 		capture:      captureFileEvent,
 		captureState: state,
 	})
@@ -275,7 +275,7 @@ func newFileCapturingSink(ctx context.Context, dest chan<- core.StreamEvent, sta
 	if dest == nil {
 		return nil, func() {}
 	}
-	return newForwarder(ctx, dest, defaultIterChBufSize, forwarderConfig{
+	return newForwarder(ctx, dest, 1, forwarderConfig{
 		capture:      captureFileEvent,
 		captureState: state,
 	})
@@ -890,6 +890,6 @@ func (s *Stream) OnToolCall(fn func(core.ToolCall)) {
 // StreamEvent directly.
 func (s *Stream) OnToolResult(fn func(core.ToolResult)) {
 	s.subscribe(core.EventToolCallResult, func(ev core.StreamEvent) {
-		fn(core.ToolResult{Content: []byte(ev.Content)})
+		fn(core.ToolResult{Content: ev.Content})
 	})
 }

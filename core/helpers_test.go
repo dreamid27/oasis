@@ -7,18 +7,14 @@ import (
 	"github.com/nevindra/oasis/core"
 )
 
-func TestTextResultJSONEncodes(t *testing.T) {
+func TestTextResultContent(t *testing.T) {
 	r := core.TextResult("hello")
-	if string(r.Content) != `"hello"` {
-		t.Errorf("TextResult content = %q, want %q", r.Content, `"hello"`)
+	if r.Content != "hello" {
+		t.Errorf("TextResult content = %q, want %q", r.Content, "hello")
 	}
-	// Must decode back to the original string via json.Unmarshal.
-	var s string
-	if err := json.Unmarshal(r.Content, &s); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
-	}
-	if s != "hello" {
-		t.Errorf("decoded string = %q, want %q", s, "hello")
+	// Text() must return the plain string as-is.
+	if got := r.Text(); got != "hello" {
+		t.Errorf("Text() = %q, want %q", got, "hello")
 	}
 }
 

@@ -601,7 +601,6 @@ func TestTerminateIteration_PinsContractFields(t *testing.T) {
 		files:            []core.Attachment{{MimeType: "text/plain"}},
 		iterations:       []core.IterationTrace{{Iter: 0}},
 		sources:          []core.Source{{URL: "https://example.test"}},
-		safeCloseCh:      func() {},
 	}
 	cfg := LoopConfig{Name: "test", Config: Config{Logger: nopLogger}}
 	extra := AgentResult{SuspendPayload: json.RawMessage(`"x"`), SuspendProtocol: "tag"}

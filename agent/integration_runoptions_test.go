@@ -243,7 +243,7 @@ func (s *sourcedTool) Definition() core.ToolDefinition {
 	return core.ToolDefinition{Name: "search", Description: "search", Parameters: []byte(`{"type":"object"}`)}
 }
 func (s *sourcedTool) ExecuteRaw(_ context.Context, _ json.RawMessage) (core.ToolResult, error) {
-	return core.ToolResult{Content: []byte(`"` + s.out + `"`)}, nil
+	return core.ToolResult{Content: s.out}, nil
 }
 func (s *sourcedTool) Sources() []core.Source { return s.srcs }
 

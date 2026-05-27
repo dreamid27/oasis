@@ -206,8 +206,9 @@ func (n *Network) buildLoopConfig(ctx context.Context, task agent.AgentTask, ch 
 	prompt, provider := n.ResolvePromptAndProviderWith(ctx, task, cfg)
 	// Network does not use ask_user, execute_plan, or spawn_agent builtins.
 	toolDefs, executeTool, executeToolStream, isStreamingTool := n.ResolveTools(ctx, task, n.buildToolDefs, nil, nil)
-	lc := n.BaseLoopConfig("network:"+n.Name(), prompt, provider, toolDefs, n.makeDispatch(task, ch, executeTool, executeToolStream, toolDefs, isStreamingTool, cfg), cfg, n.ResolveMem(opts))
-	return &lc
+	lc := runtime.AcquireLoopConfig()
+	*lc = n.BaseLoopConfig("network:"+n.Name(), prompt, provider, toolDefs, n.makeDispatch(task, ch, executeTool, executeToolStream, toolDefs, isStreamingTool, cfg), cfg, n.ResolveMem(opts))
+	return lc
 }
 
 // makeDispatch returns a DispatchFunc that routes tool calls to subagents,

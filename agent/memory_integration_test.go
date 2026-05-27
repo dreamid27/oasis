@@ -429,7 +429,9 @@ func (p *capturingProvider) ChatStream(_ context.Context, req core.ChatRequest, 
 			return *p.extractionResp, nil
 		}
 	}
-	ch <- core.StreamEvent{Type: core.EventTextDelta, Content: p.resp.Content}
+	if ch != nil {
+		ch <- core.StreamEvent{Type: core.EventTextDelta, Content: p.resp.Content}
+	}
 	return p.resp, nil
 }
 

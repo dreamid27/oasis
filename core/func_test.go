@@ -45,7 +45,7 @@ func TestFunc_StructOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out lookupResult
-	if err := json.Unmarshal(res.Content, &out); err != nil {
+	if err := json.Unmarshal([]byte(res.Content), &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.ID != "u1" || out.Name != "alice" {
@@ -65,8 +65,10 @@ func TestFunc_StringOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text() != "hello bob" {
-		t.Errorf("got %q, want %q", res.Text(), "hello bob")
+	// Func marshals the string output to JSON, so Content = `"hello bob"` (with quotes).
+	// Text() returns Content as-is.
+	if res.Text() != `"hello bob"` {
+		t.Errorf("got %q, want %q", res.Text(), `"hello bob"`)
 	}
 }
 

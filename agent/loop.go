@@ -49,11 +49,7 @@ func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- cor
 		cfg.Logger = nopLogger
 	}
 
-	// safeCloseCh closes the streaming channel exactly once.
-	safeCloseCh := func() {}
-	if ch != nil {
-		safeCloseCh = onceClose(ch)
-	}
+	// safeClose is called via state.safeClose() — no heap closure needed.
 
 	// Inject InputHandler into context for processors.
 	if cfg.InputHandler != nil {
@@ -84,9 +80,12 @@ func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- cor
 	}
 
 	// Track initial message rune count for compression decisions.
+	// Skip when compression is disabled (CompressThreshold == 0) to avoid O(n) scan.
 	var messageRuneCount int
-	for _, m := range messages {
-		messageRuneCount += utf8.RuneCountInString(m.Content)
+	if cfg.CompressThreshold > 0 {
+		for _, m := range messages {
+			messageRuneCount += utf8.RuneCountInString(m.Content)
+		}
 	}
 
 	// Detect whether the tool set includes agent_* delegation tools (Network).
@@ -98,7 +97,7 @@ func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- cor
 		}
 	}
 
-	state := acquireLoopState(messages, messageRuneCount, attachByteBudget, hasAgentTools, cfg.CompressThreshold, safeCloseCh)
+	state := acquireLoopState(messages, messageRuneCount, attachByteBudget, hasAgentTools, cfg.CompressThreshold, ch)
 	defer releaseLoopState(state)
 
 	for i := 0; i < cfg.MaxIter; i++ {
@@ -134,7 +133,7 @@ func finalizeRun(ctx context.Context, ch chan<- core.StreamEvent, state *loopSta
 			// Best-effort: still close.
 		}
 	}
-	state.safeCloseCh()
+	state.safeClose()
 }
 
 // forceSynthesis runs the post-loop forced-synthesis tail when runLoop hits

@@ -101,7 +101,7 @@ func TestLifecycleEnvelopeIterations(t *testing.T) {
 		return core.ChatResponse{Content: "done", FinishReason: core.FinishStop}, nil
 	})
 	noop := newFnTool("noop", func(ctx context.Context, args json.RawMessage) (core.ToolResult, error) {
-		return core.ToolResult{Content: []byte(`"ok"`)}, nil
+		return core.ToolResult{Content: "ok"}, nil
 	})
 	a := New("t", "test", provider, WithTools(noop))
 

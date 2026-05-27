@@ -77,9 +77,42 @@ func (r *retryProvider) Name() string { return r.inner.Name() }
 func (r *retryProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
 	ctx, cancel := r.withTimeout(ctx)
 	defer cancel()
+
+	// Non-streaming fast path: skip intermediate channel and goroutine.
+	if ch == nil {
+		var lastErr error
+		for i := 0; i < r.maxAttempts; i++ {
+			resp, err := r.inner.ChatStream(ctx, req, nil)
+			if err == nil || !isTransient(err) {
+				return resp, err
+			}
+			lastErr = err
+			r.logger.Warn("retrying transient error",
+				"provider", r.inner.Name(),
+				"status", statusOf(err),
+				"attempt", i+1,
+				"max_attempts", r.maxAttempts)
+			if i < r.maxAttempts-1 {
+				delay := retryDelay(r.baseDelay, i, err)
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return core.ChatResponse{}, ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		r.logger.Error("all retry attempts exhausted",
+			"provider", r.inner.Name(),
+			"attempts", r.maxAttempts,
+			"error", lastErr)
+		return core.ChatResponse{}, lastErr
+	}
+
 	var lastErr error
 	for i := 0; i < r.maxAttempts; i++ {
-		mid := make(chan core.StreamEvent, 64)
+		mid := make(chan core.StreamEvent, 1)
 		var (
 			resp      core.ChatResponse
 			streamErr error

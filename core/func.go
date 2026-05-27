@@ -49,5 +49,5 @@ func (t *funcTool[In, Out]) ExecuteRaw(ctx context.Context, args json.RawMessage
 	if err != nil {
 		return ToolResult{Error: "marshal result: " + err.Error()}, nil
 	}
-	return ToolResult{Content: body}, nil
+	return ToolResult{Content: string(body)}, nil
 }

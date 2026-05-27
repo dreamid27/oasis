@@ -351,11 +351,14 @@ func checkSuspendLoop(err error, cfg *LoopConfig, messages []core.ChatMessage, t
 		},
 	}
 	if cfg.SuspendCount != nil {
+		suspendMu := cfg.SuspendMu
+		suspendCount := cfg.SuspendCount
+		suspendBytes := cfg.SuspendBytes
 		suspended.onRelease = func(size int64) {
-			cfg.SuspendMu.Lock()
-			*cfg.SuspendCount--
-			*cfg.SuspendBytes -= size
-			cfg.SuspendMu.Unlock()
+			suspendMu.Lock()
+			*suspendCount--
+			*suspendBytes -= size
+			suspendMu.Unlock()
 		}
 	}
 	// Apply default TTL to prevent memory leaks from abandoned suspensions.

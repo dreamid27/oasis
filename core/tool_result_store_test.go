@@ -2,7 +2,6 @@ package core_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -13,35 +12,35 @@ import (
 )
 
 type stubResultStore struct {
-	data map[string]json.RawMessage
+	data map[string]string
 }
 
-func (s *stubResultStore) Put(ctx context.Context, content json.RawMessage) (string, error) {
+func (s *stubResultStore) Put(ctx context.Context, content string) (string, error) {
 	id := "id1"
 	s.data[id] = content
 	return id, nil
 }
 
-func (s *stubResultStore) Get(ctx context.Context, id string, offset, length int) (json.RawMessage, int, error) {
+func (s *stubResultStore) Get(ctx context.Context, id string, offset, length int) (string, int, error) {
 	c, ok := s.data[id]
 	if !ok {
-		return nil, 0, core.ErrToolResultNotFound
+		return "", 0, core.ErrToolResultNotFound
 	}
 	total := len(c)
 	if offset >= total {
-		return nil, total, nil
+		return "", total, nil
 	}
 	end := offset + length
 	if end > total {
 		end = total
 	}
-	return json.RawMessage(c[offset:end]), total, nil
+	return c[offset:end], total, nil
 }
 
 var _ core.ToolResultStore = (*stubResultStore)(nil)
 
 func TestToolResultStoreInterface(t *testing.T) {
-	s := &stubResultStore{data: map[string]json.RawMessage{}}
+	s := &stubResultStore{data: map[string]string{}}
 	id, err := s.Put(context.Background(), core.TextContent("hello world"))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +71,7 @@ func TestInMemoryStorePutGetRoundTrip(t *testing.T) {
 	if total != len(content) {
 		t.Errorf("got total=%d, want %d", total, len(content))
 	}
-	if string(raw) != string(content) {
+	if raw != content {
 		t.Errorf("round-trip mismatch: got %q, want %q", raw, content)
 	}
 }
@@ -80,7 +79,7 @@ func TestInMemoryStorePutGetRoundTrip(t *testing.T) {
 func TestInMemoryStoreByteSlicing(t *testing.T) {
 	s := core.NewInMemoryToolResultStore()
 	// Store ASCII bytes: "hello" → 5 bytes
-	payload := json.RawMessage(`"hello"`)
+	payload := `"hello"`
 	id, _ := s.Put(context.Background(), payload)
 	// Fetch bytes 1–3 (the "ell" in "hello" within the JSON-quoted form)
 	raw, total, err := s.Get(context.Background(), id, 1, 3)
@@ -90,7 +89,7 @@ func TestInMemoryStoreByteSlicing(t *testing.T) {
 	if total != len(payload) {
 		t.Errorf("got total=%d, want %d", total, len(payload))
 	}
-	if string(raw) != string(payload[1:4]) {
+	if raw != payload[1:4] {
 		t.Errorf("got slice=%q, want %q", raw, payload[1:4])
 	}
 }
@@ -102,8 +101,8 @@ func TestInMemoryStoreOffsetPastEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) != 0 {
-		t.Errorf("expected empty slice, got %q", raw)
+	if raw != "" {
+		t.Errorf("expected empty string, got %q", raw)
 	}
 	if total != len(core.TextContent("abc")) {
 		t.Errorf("got total=%d, want %d", total, len(core.TextContent("abc")))
@@ -131,15 +130,15 @@ func TestInMemoryStoreTTLEviction(t *testing.T) {
 func TestInMemoryStoreLRUEviction(t *testing.T) {
 	s := core.NewInMemoryToolResultStore(core.WithToolResultMaxBytes(10))
 
-	id1, _ := s.Put(context.Background(), json.RawMessage("0123456789")) // 10 bytes — fills cap
-	id2, _ := s.Put(context.Background(), json.RawMessage("abcdefghij")) // 10 bytes — evicts id1
+	id1, _ := s.Put(context.Background(), "0123456789") // 10 bytes — fills cap
+	id2, _ := s.Put(context.Background(), "abcdefghij") // 10 bytes — evicts id1
 
 	_, _, err := s.Get(context.Background(), id1, 0, 10)
 	if !errors.Is(err, core.ErrToolResultNotFound) {
 		t.Errorf("expected id1 evicted, got %v", err)
 	}
 	raw, _, err := s.Get(context.Background(), id2, 0, 10)
-	if err != nil || string(raw) != "abcdefghij" {
+	if err != nil || raw != "abcdefghij" {
 		t.Errorf("expected id2 retained, got raw=%q err=%v", raw, err)
 	}
 }

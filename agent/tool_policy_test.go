@@ -18,7 +18,7 @@ func TestRunWithPolicy_SuccessFirstAttempt(t *testing.T) {
 	calls := 0
 	res, err := runWithPolicy(context.Background(), core.ToolPolicy{Retries: 3}, func(_ context.Context) (core.ToolResult, error) {
 		calls++
-		return core.ToolResult{Content: []byte(`"ok"`)}, nil
+		return core.ToolResult{Content: "ok"}, nil
 	})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
@@ -26,7 +26,7 @@ func TestRunWithPolicy_SuccessFirstAttempt(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("calls = %d, want 1", calls)
 	}
-	if string(res.Content) != `"ok"` {
+	if res.Content != "ok" {
 		t.Errorf("Content = %q, want \"ok\"", res.Content)
 	}
 }
@@ -39,7 +39,7 @@ func TestRunWithPolicy_RetriesUntilSuccess(t *testing.T) {
 			if n < 3 {
 				return core.ToolResult{}, core.RetryableError(errors.New("transient"))
 			}
-			return core.ToolResult{Content: []byte(`"finally"`)}, nil
+			return core.ToolResult{Content: "finally"}, nil
 		})
 	if err != nil {
 		t.Fatalf("err = %v, want nil after retries", err)
@@ -47,7 +47,7 @@ func TestRunWithPolicy_RetriesUntilSuccess(t *testing.T) {
 	if calls != 3 {
 		t.Errorf("calls = %d, want 3", calls)
 	}
-	if string(res.Content) != `"finally"` {
+	if res.Content != "finally" {
 		t.Errorf("Content = %q", res.Content)
 	}
 }
@@ -223,7 +223,7 @@ func (p *policyTestExec) execStream(_ context.Context, _ string, _ json.RawMessa
 
 func TestNewStandardDispatch_PolicyRetries(t *testing.T) {
 	p := &policyTestExec{
-		result: core.ToolResult{Content: []byte(`"done"`)},
+		result: core.ToolResult{Content: "done"},
 		errFn: func(n int32) error {
 			if n < 3 {
 				return core.RetryableError(errors.New("transient"))
@@ -249,7 +249,7 @@ func TestNewStandardDispatch_PolicyRetries(t *testing.T) {
 }
 
 func TestNewStandardDispatch_StreamingBypassesPolicy(t *testing.T) {
-	p := &policyTestExec{result: core.ToolResult{Content: []byte(`"streamed"`)}}
+	p := &policyTestExec{result: core.ToolResult{Content: "streamed"}}
 	cfg := StandardDispatchConfig{
 		ExecuteTool:       p.exec,
 		ExecuteToolStream: p.execStream,
@@ -270,7 +270,7 @@ func TestNewStandardDispatch_StreamingBypassesPolicy(t *testing.T) {
 }
 
 func TestNewStandardDispatch_NoPolicyPassthrough(t *testing.T) {
-	p := &policyTestExec{result: core.ToolResult{Content: []byte(`"plain"`)}}
+	p := &policyTestExec{result: core.ToolResult{Content: "plain"}}
 	cfg := StandardDispatchConfig{
 		ExecuteTool:     p.exec,
 		IsStreamingTool: func(string) bool { return false },

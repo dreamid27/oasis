@@ -65,7 +65,7 @@ func (f *fakeDeferredTool) Definition() oasis.ToolDefinition {
 	return d
 }
 func (f *fakeDeferredTool) ExecuteRaw(_ context.Context, _ json.RawMessage) (oasis.ToolResult, error) {
-	return oasis.ToolResult{Content: json.RawMessage("ok")}, nil
+	return oasis.ToolResult{Content: "ok"}, nil
 }
 func (f *fakeDeferredTool) EnsureSchema(_ context.Context) error {
 	f.loadCount++

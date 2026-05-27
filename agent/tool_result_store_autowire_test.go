@@ -2,7 +2,6 @@ package agent_test
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -80,30 +79,30 @@ func (nopProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- c
 
 // trackingStore satisfies core.ToolResultStore for testing.
 type trackingStore struct {
-	data map[string]json.RawMessage
+	data map[string]string
 }
 
-func (s *trackingStore) Put(_ context.Context, content json.RawMessage) (string, error) {
+func (s *trackingStore) Put(_ context.Context, content string) (string, error) {
 	if s.data == nil {
-		s.data = map[string]json.RawMessage{}
+		s.data = map[string]string{}
 	}
 	id := "test-id-" + strings.Repeat("x", len(s.data))
 	s.data[id] = content
 	return id, nil
 }
 
-func (s *trackingStore) Get(_ context.Context, id string, offset, length int) (json.RawMessage, int, error) {
+func (s *trackingStore) Get(_ context.Context, id string, offset, length int) (string, int, error) {
 	c, ok := s.data[id]
 	if !ok {
-		return nil, 0, core.ErrToolResultNotFound
+		return "", 0, core.ErrToolResultNotFound
 	}
 	total := len(c)
 	if offset >= total {
-		return nil, total, nil
+		return "", total, nil
 	}
 	end := offset + length
 	if end > total {
 		end = total
 	}
-	return json.RawMessage(c[offset:end]), total, nil
+	return c[offset:end], total, nil
 }

@@ -40,7 +40,7 @@ func (t *benchTool) Definition() core.ToolDefinition {
 	}
 }
 func (t *benchTool) ExecuteRaw(_ context.Context, _ json.RawMessage) (core.ToolResult, error) {
-	return core.ToolResult{Content: json.RawMessage(`"ok"`)}, nil
+	return core.ToolResult{Content: "ok"}, nil
 }
 
 type benchPreProcessor struct{}
@@ -188,7 +188,7 @@ func BenchmarkAgentExecute_Stream(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		ch := make(chan core.StreamEvent, 64)
+		ch := make(chan core.StreamEvent, 1)
 		done := make(chan struct{})
 		go func() {
 			for range ch {
@@ -209,7 +209,7 @@ func BenchmarkAgentExecute_StreamWithToolCalls(b *testing.B) {
 	for range b.N {
 		p := &scriptedProvider{responses: resps}
 		a := agent.New("bench", "bench", p, agent.WithTools(tools...), agent.WithoutPromptCaching())
-		ch := make(chan core.StreamEvent, 64)
+		ch := make(chan core.StreamEvent, 1)
 		done := make(chan struct{})
 		go func() {
 			for range ch {
@@ -288,7 +288,7 @@ func BenchmarkAgentExecute_LargeToolResult(b *testing.B) {
 		{"1MB", 1024 * 1024},
 	} {
 		b.Run("result="+label.name, func(b *testing.B) {
-			bigContent := json.RawMessage(`"` + strings.Repeat("z", label.size) + `"`)
+			bigContent := strings.Repeat("z", label.size)
 			bigTool := &largeBenchTool{content: bigContent}
 			resps := []core.ChatResponse{
 				{ToolCalls: []core.ToolCall{{ID: "c1", Name: "big_tool", Args: json.RawMessage(`{}`)}}},
@@ -306,7 +306,7 @@ func BenchmarkAgentExecute_LargeToolResult(b *testing.B) {
 	}
 }
 
-type largeBenchTool struct{ content json.RawMessage }
+type largeBenchTool struct{ content string }
 
 func (t *largeBenchTool) Name() string { return "big_tool" }
 func (t *largeBenchTool) Definition() core.ToolDefinition {

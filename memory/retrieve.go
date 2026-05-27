@@ -61,6 +61,19 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 		defer span.End()
 	}
 
+	// Fast path: skip the full retrieve pipeline when no memory backend is configured.
+	if m.store == nil && m.itemStore == nil && m.embedding == nil &&
+		len(m.retrieveProcs) == 0 && !m.semanticRecall && m.maxTokens == 0 {
+		var out []core.ChatMessage
+		if strings.TrimSpace(systemPrompt) != "" {
+			out = append(out, core.SystemMessage(systemPrompt))
+		}
+		out = append(out, core.ChatMessage{
+			Role: core.RoleUser, Content: task.Input, Attachments: task.Attachments,
+		})
+		return out
+	}
+
 	in := &RetrieveContext{
 		AgentName:    agentName,
 		Task:         task,

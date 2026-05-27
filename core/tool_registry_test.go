@@ -186,9 +186,9 @@ func TestToolRegistry_Add_ReplacesByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got := string(res.Content)
-	if got != `"second"` {
-		t.Errorf("Execute result = %q, want %q (first tool still active after re-Add)", got, `"second"`)
+	got := res.Content
+	if got != "second" {
+		t.Errorf("Execute result = %q, want %q (first tool still active after re-Add)", got, "second")
 	}
 }
 

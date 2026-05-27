@@ -291,7 +291,7 @@ func TestObservedToolDefinition(t *testing.T) {
 }
 
 func TestObservedToolExecute(t *testing.T) {
-	want := oasis.ToolResult{Content: json.RawMessage(`"result data"`)}
+	want := oasis.ToolResult{Content: "result data"}
 	inner := &mockTool{def: oasis.ToolDefinition{Name: "search"}, result: want}
 	ot := WrapTool(inner, testInstruments(t))
 
@@ -299,7 +299,7 @@ func TestObservedToolExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRaw returned unexpected error: %v", err)
 	}
-	if string(got.Content) != string(want.Content) {
+	if got.Content != want.Content {
 		t.Errorf("Content = %q, want %q", got.Content, want.Content)
 	}
 	if got.Error != "" {

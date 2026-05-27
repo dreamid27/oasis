@@ -115,12 +115,8 @@ func TestMcpToolWrapper_Execute_ContentMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var got string
-	if err := json.Unmarshal(result.Content, &got); err != nil {
-		t.Fatalf("Content not JSON-decodable: %v (raw=%s)", err, result.Content)
-	}
-	if got != "line1\nline2" {
-		t.Errorf("content = %q, want %q", got, "line1\nline2")
+	if result.Content != "line1\nline2" {
+		t.Errorf("content = %q, want %q", result.Content, "line1\nline2")
 	}
 }
 

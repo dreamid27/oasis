@@ -32,8 +32,8 @@ func TestAnyTool_InterfaceCompliance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRaw error: %v", err)
 	}
-	if string(res.Content) != `"ok"` {
-		t.Errorf("Content = %q, want %q", res.Content, `"ok"`)
+	if res.Content != "ok" {
+		t.Errorf("Content = %q, want %q", res.Content, "ok")
 	}
 }
 
@@ -111,7 +111,7 @@ func TestErase_RoundTrip(t *testing.T) {
 		t.Fatalf("ToolResult.Error: %q", res.Error)
 	}
 	var got echoOutput
-	if err := json.Unmarshal(res.Content, &got); err != nil {
+	if err := json.Unmarshal([]byte(res.Content), &got); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
 	if got.Echoed != "hello" {

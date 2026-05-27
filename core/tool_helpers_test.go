@@ -25,7 +25,7 @@ func TestJSONResult_Struct(t *testing.T) {
 	}
 	r := JSONResult(point{X: 1, Y: 2})
 	var got point
-	if err := json.Unmarshal(r.Content, &got); err != nil {
+	if err := json.Unmarshal([]byte(r.Content), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if got.X != 1 || got.Y != 2 {
@@ -37,7 +37,7 @@ func TestJSONResult_Map(t *testing.T) {
 	m := map[string]int{"a": 10, "b": 20}
 	r := JSONResult(m)
 	var got map[string]int
-	if err := json.Unmarshal(r.Content, &got); err != nil {
+	if err := json.Unmarshal([]byte(r.Content), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if got["a"] != 10 || got["b"] != 20 {
@@ -85,8 +85,10 @@ func TestText_FromTextResult(t *testing.T) {
 
 func TestText_FromJSONResultWithString(t *testing.T) {
 	r := JSONResult("json string")
-	if got := r.Text(); got != "json string" {
-		t.Errorf("Text(): got %q, want %q", got, "json string")
+	// JSONResult encodes the string as JSON, so Content = `"json string"` (with quotes).
+	// Text() returns Content as-is.
+	if got := r.Text(); got != `"json string"` {
+		t.Errorf("Text(): got %q, want %q", got, `"json string"`)
 	}
 }
 
@@ -98,23 +100,23 @@ func TestText_NilContent(t *testing.T) {
 }
 
 func TestText_NonStringJSONContent(t *testing.T) {
-	// A number, object, or array is valid JSON but not a JSON string token —
-	// Text() should return "" rather than corrupt data.
+	// Content is now a plain string; Text() returns it as-is.
 	cases := []struct {
 		name    string
-		content json.RawMessage
+		content string
+		want    string
 	}{
-		{"number", json.RawMessage(`42`)},
-		{"object", json.RawMessage(`{"x":1}`)},
-		{"array", json.RawMessage(`[1,2,3]`)},
-		{"bool", json.RawMessage(`true`)},
-		{"null", json.RawMessage(`null`)},
+		{"number", `42`, `42`},
+		{"object", `{"x":1}`, `{"x":1}`},
+		{"array", `[1,2,3]`, `[1,2,3]`},
+		{"bool", `true`, `true`},
+		{"empty", ``, ``},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := ToolResult{Content: c.content}
-			if got := r.Text(); got != "" {
-				t.Errorf("Text() on %s content: got %q, want %q", c.name, got, "")
+			if got := r.Text(); got != c.want {
+				t.Errorf("Text() on %s content: got %q, want %q", c.name, got, c.want)
 			}
 		})
 	}

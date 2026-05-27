@@ -210,8 +210,8 @@ func TestChainTypeAssertion(t *testing.T) {
 	if err := chain.RunPostTool(context.Background(), core.ToolCall{}, &result); err != nil {
 		t.Fatal(err)
 	}
-	if string(result.Content) != `"untouched"` {
-		t.Errorf("content = %q, want %q", result.Content, `"untouched"`)
+	if result.Content != "untouched" {
+		t.Errorf("content = %q, want %q", result.Content, "untouched")
 	}
 }
 
