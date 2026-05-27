@@ -49,7 +49,7 @@ func (e *erasedTool[In, Out]) ExecuteRaw(ctx context.Context, args json.RawMessa
 	if err != nil {
 		return ToolResult{Error: "marshal result: " + err.Error()}, nil
 	}
-	return ToolResult{Content: body}, nil
+	return ToolResult{Content: string(body)}, nil
 }
 
 // EraseStreaming converts a StreamingTool[In, Out] into a StreamingAnyTool.
@@ -97,7 +97,7 @@ func (e *erasedStreamingTool[In, Out]) ExecuteStream(ctx context.Context, args j
 	if err != nil {
 		return ToolResult{Error: "marshal result: " + err.Error()}, nil
 	}
-	return ToolResult{Content: body}, nil
+	return ToolResult{Content: string(body)}, nil
 }
 
 // deriveOutSchema returns the OutputSchema to publish for an erased tool.

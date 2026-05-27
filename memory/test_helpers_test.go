@@ -102,36 +102,6 @@ func (s *testStore) GetChunksByIDs(_ context.Context, _ []string) ([]core.Chunk,
 func (s *testStore) GetConfig(_ context.Context, _ string) (string, error) { return "", nil }
 func (s *testStore) SetConfig(_ context.Context, _, _ string) error        { return nil }
 
-// --- core.Store: Scheduled Actions ---
-
-func (s *testStore) CreateScheduledAction(_ context.Context, _ core.ScheduledAction) error {
-	return nil
-}
-
-func (s *testStore) ListScheduledActions(_ context.Context) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-
-func (s *testStore) GetDueScheduledActions(_ context.Context, _ int64) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-
-func (s *testStore) UpdateScheduledAction(_ context.Context, _ core.ScheduledAction) error {
-	return nil
-}
-
-func (s *testStore) UpdateScheduledActionEnabled(_ context.Context, _ string, _ bool) error {
-	return nil
-}
-
-func (s *testStore) DeleteScheduledAction(_ context.Context, _ string) error { return nil }
-
-func (s *testStore) DeleteAllScheduledActions(_ context.Context) (int, error) { return 0, nil }
-
-func (s *testStore) FindScheduledActionsByDescription(_ context.Context, _ string) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-
 // --- core.Store: Lifecycle ---
 
 // Init is already provided by inMemTestStore (Init(context.Context) error).

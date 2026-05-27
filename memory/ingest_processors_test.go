@@ -117,7 +117,9 @@ type fakeProvider struct {
 
 func (f *fakeProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
 	f.called = true
-	close(ch)
+	if ch != nil {
+		close(ch)
+	}
 	return core.ChatResponse{Content: f.response}, nil
 }
 

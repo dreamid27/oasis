@@ -66,6 +66,10 @@ type AgentMemory struct {
 	logger *slog.Logger
 	tracer core.Tracer
 
+	// Cached processor chains (built once at Init, reused per call)
+	cachedRetrieveChain []RetrieveProcessor
+	cachedIngestChain   []IngestProcessor
+
 	// Background goroutine discipline
 	semOnce       sync.Once
 	sem           chan struct{}
@@ -159,6 +163,9 @@ func (m *AgentMemory) Init(cfg AgentMemoryConfig) {
 		m.logger = slog.New(slog.DiscardHandler)
 	}
 	m.tracer = cfg.Tracer
+
+	m.cachedRetrieveChain = m.defaultRetrieveChain()
+	m.cachedIngestChain = m.defaultIngestChain()
 }
 
 // initSem lazily initializes the ingest semaphore.
@@ -278,7 +285,7 @@ func (m *AgentMemory) PersistTurn(ctx context.Context, agentName string, task co
 			Logger:    m.logger,
 		}
 
-		chain := m.defaultIngestChain()
+		chain := m.cachedIngestChain
 		if !fullPersist {
 			chain = []IngestProcessor{EnsureThread{}, PersistMessages{}}
 		}

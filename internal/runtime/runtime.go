@@ -19,6 +19,19 @@ import (
 
 const defaultMaxIter = 25
 
+var loopConfigPool = sync.Pool{
+	New: func() any { return new(LoopConfig) },
+}
+
+func AcquireLoopConfig() *LoopConfig {
+	return loopConfigPool.Get().(*LoopConfig)
+}
+
+func ReleaseLoopConfig(lc *LoopConfig) {
+	*lc = LoopConfig{}
+	loopConfigPool.Put(lc)
+}
+
 // Runtime holds fields shared by LLMAgent and Network.
 // Replaces the former AgentCore embedded struct.
 //
@@ -35,7 +48,6 @@ const defaultMaxIter = 25
 //	Compactor but serve different purposes and are set on different lifecycles.
 //	Init copies cfg.Compactor → c.Compressor at build time; the runtime uses
 //	c.Compressor directly.
-//
 type Runtime struct {
 	Config // embedded — option-set fields promote up
 
@@ -52,6 +64,12 @@ type Runtime struct {
 	// Cached / computed at build time.
 	cachedToolDefs          []core.ToolDefinition
 	activeSkillInstructions string
+
+	// Cached method values — avoid per-call closure allocation.
+	cachedExecuteTool       ToolExecFunc
+	cachedExecuteToolStream ToolExecStreamFunc
+	cachedIsStreamingTool   func(string) bool
+	cachedLookupTool        func(string) (core.AnyTool, bool)
 
 	// Suspension counters — mutated during execution, guarded by suspendMu.
 	suspendCount int64
@@ -136,6 +154,12 @@ func Init(c *Runtime, name, description string, provider core.Provider, cfg *Con
 		}
 		c.activeSkillInstructions = strings.Join(parts, "\n\n---\n\n")
 	}
+
+	// Cache method values to avoid per-call closure allocation.
+	c.cachedExecuteTool = c.tools.Execute
+	c.cachedExecuteToolStream = c.tools.ExecuteStream
+	c.cachedIsStreamingTool = c.tools.IsStreamingTool
+	c.cachedLookupTool = c.tools.Lookup
 }
 
 // Name returns the agent's name.
@@ -161,6 +185,9 @@ func (c *Runtime) CachedToolDefs() []core.ToolDefinition { return c.cachedToolDe
 
 // SetCachedToolDefs replaces the cached tool definitions.
 func (c *Runtime) SetCachedToolDefs(defs []core.ToolDefinition) { c.cachedToolDefs = defs }
+
+// Processors returns the processor chain for this runtime.
+func (c *Runtime) Processors() *processor.Chain { return c.processors }
 
 // Close waits for all in-flight background persist goroutines and releases
 // memory orchestrator resources.
@@ -308,13 +335,15 @@ func (c *Runtime) ResolveTools(
 	inputHandlerDef, executePlanDef *core.ToolDefinition,
 ) (defs []core.ToolDefinition, exec ToolExecFunc, execStream ToolExecStreamFunc, isStream func(string) bool) {
 	if dynDefs, dynExec, dynExecStream := c.ResolveDynamicTools(ctx, task); dynDefs != nil {
-		c.Config.Logger.Debug("using dynamic tools", "agent", c.name, "tool_count", len(dynDefs))
+		if c.Config.Logger.Enabled(ctx, slog.LevelDebug) {
+			c.Config.Logger.Debug("using dynamic tools", "agent", c.name, "tool_count", len(dynDefs))
+		}
 		if prebuild != nil {
 			dynDefs = prebuild(dynDefs)
 		}
 		return c.CacheBuiltinToolDefs(dynDefs, inputHandlerDef, executePlanDef), dynExec, dynExecStream, func(string) bool { return false }
 	}
-	return c.cachedToolDefs, c.tools.Execute, c.tools.ExecuteStream, c.tools.IsStreamingTool
+	return c.cachedToolDefs, c.cachedExecuteTool, c.cachedExecuteToolStream, c.cachedIsStreamingTool
 }
 
 // BaseLoopConfig assembles a LoopConfig from resolved values.
@@ -347,7 +376,7 @@ func (c *Runtime) BaseLoopConfig(
 		SuspendBytes: &c.suspendBytes,
 		SuspendMu:    &c.suspendMu,
 		Compressor:   c.Compressor,
-		LookupTool:   c.tools.Lookup,
+		LookupTool:   c.cachedLookupTool,
 	}
 }
 
@@ -358,8 +387,8 @@ func (c *Runtime) ExecuteWithSpan(
 	task core.AgentTask,
 	ch chan<- core.StreamEvent,
 	agentType, logKey string,
-	buildCfg func(ctx context.Context, task core.AgentTask, ch chan<- core.StreamEvent) LoopConfig,
-	runLoopFn func(ctx context.Context, cfg LoopConfig, task core.AgentTask, ch chan<- core.StreamEvent) (core.AgentResult, error),
+	buildCfg func(ctx context.Context, task core.AgentTask, ch chan<- core.StreamEvent) *LoopConfig,
+	runLoopFn func(ctx context.Context, cfg *LoopConfig, task core.AgentTask, ch chan<- core.StreamEvent) (core.AgentResult, error),
 ) (core.AgentResult, error) {
 	// Emit run-start as the first event on every stream.
 	if ch != nil {
@@ -378,9 +407,15 @@ func (c *Runtime) ExecuteWithSpan(
 		defer span.End()
 	}
 
-	c.Config.Logger.Info(logKey+" started", logKey, c.name)
+	if c.Config.Logger.Enabled(ctx, slog.LevelInfo) {
+		c.Config.Logger.Info(logKey+" started", logKey, c.name)
+	}
 	start := time.Now()
-	result, err := runLoopFn(ctx, buildCfg(ctx, task, ch), task, ch)
+	loopCfg := buildCfg(ctx, task, ch)
+	result, err := runLoopFn(ctx, loopCfg, task, ch)
+	if !result.Suspended() {
+		ReleaseLoopConfig(loopCfg)
+	}
 
 	if span != nil {
 		span.SetAttr(
@@ -395,17 +430,21 @@ func (c *Runtime) ExecuteWithSpan(
 	}
 
 	if err != nil {
-		c.Config.Logger.Error(logKey+" failed", logKey, c.name,
-			"error", err,
-			"duration", time.Since(start),
-			"tokens.input", result.Usage.InputTokens,
-			"tokens.output", result.Usage.OutputTokens)
+		if c.Config.Logger.Enabled(ctx, slog.LevelError) {
+			c.Config.Logger.Error(logKey+" failed", logKey, c.name,
+				"error", err,
+				"duration", time.Since(start),
+				"tokens.input", result.Usage.InputTokens,
+				"tokens.output", result.Usage.OutputTokens)
+		}
 	} else {
-		c.Config.Logger.Info(logKey+" completed", logKey, c.name,
-			"duration", time.Since(start),
-			"tokens.input", result.Usage.InputTokens,
-			"tokens.output", result.Usage.OutputTokens,
-			"steps", len(result.Steps))
+		if c.Config.Logger.Enabled(ctx, slog.LevelInfo) {
+			c.Config.Logger.Info(logKey+" completed", logKey, c.name,
+				"duration", time.Since(start),
+				"tokens.input", result.Usage.InputTokens,
+				"tokens.output", result.Usage.OutputTokens,
+				"steps", len(result.Steps))
+		}
 	}
 	return result, err
 }
@@ -516,4 +555,3 @@ func mergeGenerationParams(base *core.GenerationParams, override *Generation) *c
 	overlayNonNilGeneration(out, override)
 	return out
 }
-

@@ -26,13 +26,13 @@ func NowUnix() int64 {
 // --- Core interfaces ---
 
 // Provider abstracts the LLM backend. ChatStream is the only entry point;
-// implementations MUST close ch before returning. For non-streaming use,
-// callers use the core.Chat helper.
+// for non-streaming use, callers use the core.Chat helper (which passes nil).
 type Provider interface {
 	// ChatStream emits StreamEvent values into ch as content is generated.
-	// Implementations MUST close ch before returning. Callers range over ch
-	// until close. Returns the final assembled ChatResponse with complete
-	// ToolCalls and Usage.
+	// ch may be nil for non-streaming calls — when nil, implementations MUST
+	// NOT send to or close ch. When non-nil, implementations MUST close ch
+	// before returning. Returns the final assembled ChatResponse with
+	// complete ToolCalls and Usage.
 	ChatStream(ctx context.Context, req ChatRequest, ch chan<- StreamEvent) (ChatResponse, error)
 	Name() string
 }
@@ -90,12 +90,13 @@ type BlobStore interface {
 }
 
 // ToolResult is the outcome of a tool execution.
-// Content holds JSON-encoded bytes. For plain text, use TextResult or TextContent.
-// For already-encoded JSON, use JSONContent.
+// Content holds the result as a string. For plain text, use TextResult.
+// For JSON output, use JSONResult (which marshals to a JSON string).
+// For pre-encoded JSON bytes, use JSONContent.
 type ToolResult struct {
-	Content     json.RawMessage `json:"content,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	Attachments []Attachment    `json:"attachments,omitempty"` // multimodal content (images, PDFs, etc.) passed to the LLM
+	Content     string       `json:"content,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"` // multimodal content (images, PDFs, etc.) passed to the LLM
 }
 
 // ToolRegistry holds all registered atomic tools and dispatches execution.
@@ -150,7 +151,7 @@ func (r *ToolRegistry) Remove(name string) error {
 
 // AllDefinitions returns tool definitions from all registered tools.
 func (r *ToolRegistry) AllDefinitions() []ToolDefinition {
-	var defs []ToolDefinition
+	defs := make([]ToolDefinition, 0, len(r.tools))
 	for _, t := range r.tools {
 		defs = append(defs, t.Definition())
 	}

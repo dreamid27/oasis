@@ -77,9 +77,42 @@ func (r *retryProvider) Name() string { return r.inner.Name() }
 func (r *retryProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
 	ctx, cancel := r.withTimeout(ctx)
 	defer cancel()
+
+	// Non-streaming fast path: skip intermediate channel and goroutine.
+	if ch == nil {
+		var lastErr error
+		for i := 0; i < r.maxAttempts; i++ {
+			resp, err := r.inner.ChatStream(ctx, req, nil)
+			if err == nil || !isTransient(err) {
+				return resp, err
+			}
+			lastErr = err
+			r.logger.Warn("retrying transient error",
+				"provider", r.inner.Name(),
+				"status", statusOf(err),
+				"attempt", i+1,
+				"max_attempts", r.maxAttempts)
+			if i < r.maxAttempts-1 {
+				delay := retryDelay(r.baseDelay, i, err)
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return core.ChatResponse{}, ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		r.logger.Error("all retry attempts exhausted",
+			"provider", r.inner.Name(),
+			"attempts", r.maxAttempts,
+			"error", lastErr)
+		return core.ChatResponse{}, lastErr
+	}
+
 	var lastErr error
 	for i := 0; i < r.maxAttempts; i++ {
-		mid := make(chan core.StreamEvent, 64)
+		mid := make(chan core.StreamEvent, 1)
 		var (
 			resp      core.ChatResponse
 			streamErr error
@@ -91,29 +124,32 @@ func (r *retryProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch
 		}()
 
 		var tokensSent bool
-		// Why: never block the LLM token feed on a slow consumer. If ctx fires
-		// mid-stream we keep draining mid (so the inner provider goroutine can
-		// finish and close mid) but stop forwarding, then return ctx.Err.
 		ctxDone := false
 		for ev := range mid {
 			if ctxDone {
 				continue
 			}
 			tokensSent = true
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				ctxDone = true
+			if ch != nil {
+				select {
+				case ch <- ev:
+				case <-ctx.Done():
+					ctxDone = true
+				}
 			}
 		}
 		<-done
 
 		if ctxDone {
-			close(ch)
+			if ch != nil {
+				close(ch)
+			}
 			return core.ChatResponse{}, ctx.Err()
 		}
 		if streamErr == nil || !isTransient(streamErr) || tokensSent {
-			close(ch)
+			if ch != nil {
+				close(ch)
+			}
 			return resp, streamErr
 		}
 
@@ -129,7 +165,9 @@ func (r *retryProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				close(ch)
+				if ch != nil {
+					close(ch)
+				}
 				return core.ChatResponse{}, ctx.Err()
 			case <-timer.C:
 			}
@@ -139,7 +177,9 @@ func (r *retryProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch
 		"provider", r.inner.Name(),
 		"attempts", r.maxAttempts,
 		"error", lastErr)
-	close(ch)
+	if ch != nil {
+		close(ch)
+	}
 	return core.ChatResponse{}, lastErr
 }
 

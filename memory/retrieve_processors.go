@@ -101,7 +101,12 @@ func (b BatchedRecall) Process(ctx context.Context, in *RetrieveContext) error {
 	for _, r := range results {
 		byKind[r.Item.Kind] = append(byKind[r.Item.Kind], r.Item)
 	}
-	in.Selected = byKind
+	if in.Selected == nil {
+		in.Selected = make(map[Kind][]MemoryItem)
+	}
+	for k, items := range byKind {
+		in.Selected[k] = items
+	}
 
 	headerFor := func(k Kind) string {
 		switch k {
@@ -177,8 +182,11 @@ func (r RecallCrossThread) Process(ctx context.Context, in *RetrieveContext) err
 
 // TrimToBudget trims History to Budget tokens (semantic or oldest-first).
 type TrimToBudget struct {
-	Budget   int
-	Semantic bool
+	Budget    int
+	Semantic  bool
+	Embedder  core.EmbeddingProvider // nil = fall back to oldest-first
+	TrimCache *embeddingCache        // nil-safe; lazily created if needed
+	KeepRecent int
 }
 
 func (t TrimToBudget) Process(ctx context.Context, in *RetrieveContext) error {
@@ -198,17 +206,20 @@ func (t TrimToBudget) Process(ctx context.Context, in *RetrieveContext) error {
 		return nil
 	}
 
-	// We don't have access to *AgentMemory here, so semantic trimming uses
-	// a one-shot path. For full semantic trimming with the embedding cache,
-	// users can supply their own RetrieveProcessor or the AgentMemory hooks
-	// it directly via defaultRetrieveChain. For v1 we always fall back to
-	// oldest-first here.
-	trimmed := trimHistoryOldestFirst(msgs, 0, len(msgs), total, t.Budget)
+	var trimmed []core.ChatMessage
+	if t.Semantic && t.Embedder != nil {
+		keepRecent := t.KeepRecent
+		if keepRecent <= 0 {
+			keepRecent = defaultKeepRecent
+		}
+		trimmed = doSemanticTrim(ctx, t.Embedder, t.TrimCache, msgs, 0, len(msgs), total, t.Budget, in.Embedding, keepRecent)
+	} else {
+		trimmed = trimHistoryOldestFirst(msgs, 0, len(msgs), total, t.Budget)
+	}
 	out := make([]core.Message, 0, len(trimmed))
 	for _, m := range trimmed {
 		out = append(out, core.Message{Role: m.Role, Content: m.Content})
 	}
 	in.History = out
-	_ = ctx
 	return nil
 }

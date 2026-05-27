@@ -25,7 +25,9 @@ type scriptedProvider struct {
 }
 
 func (p *scriptedProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.capturedRequestProvider.mu.Lock()
 	p.capturedRequestProvider.reqs = append(p.capturedRequestProvider.reqs, req)
 	p.capturedRequestProvider.mu.Unlock()
@@ -50,7 +52,9 @@ type scriptedRepeatingProvider struct {
 }
 
 func (p *scriptedRepeatingProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.capturedRequestProvider.mu.Lock()
 	p.capturedRequestProvider.reqs = append(p.capturedRequestProvider.reqs, req)
 	p.capturedRequestProvider.mu.Unlock()
@@ -239,7 +243,7 @@ func (s *sourcedTool) Definition() core.ToolDefinition {
 	return core.ToolDefinition{Name: "search", Description: "search", Parameters: []byte(`{"type":"object"}`)}
 }
 func (s *sourcedTool) ExecuteRaw(_ context.Context, _ json.RawMessage) (core.ToolResult, error) {
-	return core.ToolResult{Content: []byte(`"` + s.out + `"`)}, nil
+	return core.ToolResult{Content: s.out}, nil
 }
 func (s *sourcedTool) Sources() []core.Source { return s.srcs }
 

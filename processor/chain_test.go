@@ -33,7 +33,7 @@ func (p *uppercaseProcessor) PostLLM(_ context.Context, resp *core.ChatResponse)
 type redactToolProcessor struct{}
 
 func (p *redactToolProcessor) PostTool(_ context.Context, _ core.ToolCall, result *core.ToolResult) error {
-	result.Content = core.TextContent("[redacted] " + string(result.Content))
+	result.Content = "[redacted] " + result.Content
 	return nil
 }
 
@@ -210,8 +210,8 @@ func TestChainTypeAssertion(t *testing.T) {
 	if err := chain.RunPostTool(context.Background(), core.ToolCall{}, &result); err != nil {
 		t.Fatal(err)
 	}
-	if string(result.Content) != `"untouched"` {
-		t.Errorf("content = %q, want %q", result.Content, `"untouched"`)
+	if result.Content != "untouched" {
+		t.Errorf("content = %q, want %q", result.Content, "untouched")
 	}
 }
 

@@ -44,16 +44,12 @@ var RunLoop = runLoop
 //
 // Iteration body lives in runIteration (iteration.go); the post-loop
 // forced-synthesis tail lives in forceSynthesis below.
-func runLoop(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core.StreamEvent) (AgentResult, error) {
+func runLoop(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- core.StreamEvent) (AgentResult, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = nopLogger
 	}
 
-	// safeCloseCh closes the streaming channel exactly once.
-	safeCloseCh := func() {}
-	if ch != nil {
-		safeCloseCh = onceClose(ch)
-	}
+	// safeClose is called via state.safeClose() — no heap closure needed.
 
 	// Inject InputHandler into context for processors.
 	if cfg.InputHandler != nil {
@@ -62,16 +58,16 @@ func runLoop(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core
 
 	// Build initial messages (system prompt + user memory + history + user input).
 	// If ResumeMessages is set (suspend/resume), use those instead.
-	const preAllocPer = 8
-	const preAllocCeil = 2000
 	var messages []core.ChatMessage
 	if len(cfg.ResumeMessages) > 0 {
 		messages = cfg.ResumeMessages
 	} else {
 		initial := cfg.Mem.BuildMessages(ctx, cfg.Name, cfg.SystemPrompt, task)
-		preAllocCap := cfg.MaxIter * preAllocPer
-		if preAllocCap > preAllocCeil {
-			preAllocCap = preAllocCeil
+		var preAllocCap int
+		if len(cfg.Tools) == 0 {
+			preAllocCap = 2
+		} else {
+			preAllocCap = min(cfg.MaxIter*4, 200)
 		}
 		messages = make([]core.ChatMessage, len(initial), len(initial)+preAllocCap)
 		copy(messages, initial)
@@ -84,9 +80,12 @@ func runLoop(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core
 	}
 
 	// Track initial message rune count for compression decisions.
+	// Skip when compression is disabled (CompressThreshold == 0) to avoid O(n) scan.
 	var messageRuneCount int
-	for _, m := range messages {
-		messageRuneCount += utf8.RuneCountInString(m.Content)
+	if cfg.CompressThreshold > 0 {
+		for _, m := range messages {
+			messageRuneCount += utf8.RuneCountInString(m.Content)
+		}
 	}
 
 	// Detect whether the tool set includes agent_* delegation tools (Network).
@@ -98,14 +97,8 @@ func runLoop(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core
 		}
 	}
 
-	state := &loopState{
-		messages:          messages,
-		messageRuneCount:  messageRuneCount,
-		attachByteBudget:  attachByteBudget,
-		hasAgentTools:     hasAgentTools,
-		compressThreshold: cfg.CompressThreshold,
-		safeCloseCh:       safeCloseCh,
-	}
+	state := acquireLoopState(messages, messageRuneCount, attachByteBudget, hasAgentTools, cfg.CompressThreshold, ch)
+	defer releaseLoopState(state)
 
 	for i := 0; i < cfg.MaxIter; i++ {
 		result := runIteration(ctx, cfg, task, ch, state, i)
@@ -140,12 +133,12 @@ func finalizeRun(ctx context.Context, ch chan<- core.StreamEvent, state *loopSta
 			// Best-effort: still close.
 		}
 	}
-	state.safeCloseCh()
+	state.safeClose()
 }
 
 // forceSynthesis runs the post-loop forced-synthesis tail when runLoop hits
 // cfg.MaxIter without a natural termination.
-func forceSynthesis(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan<- core.StreamEvent, state *loopState) (AgentResult, error) {
+func forceSynthesis(ctx context.Context, cfg *LoopConfig, task AgentTask, ch chan<- core.StreamEvent, state *loopState) (AgentResult, error) {
 	cfg.Logger.Warn("max iterations reached, forcing synthesis", "agent", cfg.Name, "iteration", cfg.MaxIter)
 	state.messages = append(state.messages, core.UserMessage(
 		"You have used all available tool calls. Summarize what you found and respond to the user."))
@@ -183,7 +176,7 @@ func forceSynthesis(ctx context.Context, cfg LoopConfig, task AgentTask, ch chan
 
 	captureProviderMeta(state, &resp)
 
-	if r, handled := runPostLLMOrHandle(ctx, synthCtx, cfg, task, ch, state, &resp, nil); handled {
+	if r, handled := runPostLLMOrHandle(ctx, synthCtx, cfg, task, ch, state, &resp, iterEndParams{}); handled {
 		return r.final, r.err
 	}
 

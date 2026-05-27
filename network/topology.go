@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nevindra/oasis/agent"
 	"github.com/nevindra/oasis/core"
 )
 
@@ -75,14 +76,17 @@ func (n *Network) Topology() Topology {
 	return top
 }
 
-// classifyAgent uses type assertion to detect Network children. Walks through
-// supervisor wrappers (anything with Unwrap() core.Agent) so a Network wrapped
-// in restart/fallback/breaker is still classified as KindNetwork. Anything
-// else falls back to KindLLMAgent.
+// classifyAgent uses type assertion to detect Network and LLMAgent children.
+// Walks through supervisor wrappers (anything with Unwrap() core.Agent) so a
+// wrapped agent is still classified correctly. Custom core.Agent
+// implementations that are neither get KindUnknown.
 func classifyAgent(a core.Agent) NodeKind {
 	for a != nil {
-		if _, ok := a.(*Network); ok {
+		switch a.(type) {
+		case *Network:
 			return KindNetwork
+		case *agent.LLMAgent:
+			return KindLLMAgent
 		}
 		u, ok := a.(interface{ Unwrap() core.Agent })
 		if !ok {
@@ -94,7 +98,7 @@ func classifyAgent(a core.Agent) NodeKind {
 		}
 		a = inner
 	}
-	return KindLLMAgent
+	return KindUnknown
 }
 
 func summarizeSupervisors(networkWide SupervisorPolicy, perChild SupervisorPolicy) []SupervisorSummary {
@@ -114,7 +118,11 @@ func summarizeSupervisors(networkWide SupervisorPolicy, perChild SupervisorPolic
 func summarize(p SupervisorPolicy) SupervisorSummary {
 	switch v := p.(type) {
 	case *restartPolicy:
-		return SupervisorSummary{Kind: "restart", Params: map[string]string{"max": fmt.Sprint(v.max)}}
+		params := map[string]string{"max": fmt.Sprint(v.max)}
+		if v.delay > 0 {
+			params["delay"] = v.delay.String()
+		}
+		return SupervisorSummary{Kind: "restart", Params: params}
 	case *fallbackPolicy:
 		return SupervisorSummary{Kind: "fallback", Params: map[string]string{"backup": v.backup.Name()}}
 	case *quorumPolicy:

@@ -22,7 +22,9 @@ import (
 //	data: {"id":"...","choices":[...]}\n
 //	data: [DONE]\n
 func StreamSSE(ctx context.Context, body io.Reader, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 
 	scanner := bufio.NewScanner(body)
 	// Increase buffer for large SSE payloads.
@@ -101,10 +103,12 @@ func StreamSSE(ctx context.Context, body io.Reader, ch chan<- oasis.StreamEvent)
 		// Accumulate text content.
 		if delta.Content != "" {
 			fullContent.WriteString(delta.Content)
-			select {
-			case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: delta.Content}:
-			case <-ctx.Done():
-				return oasis.ChatResponse{}, ctx.Err()
+			if ch != nil {
+				select {
+				case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: delta.Content}:
+				case <-ctx.Done():
+					return oasis.ChatResponse{}, ctx.Err()
+				}
 			}
 		}
 

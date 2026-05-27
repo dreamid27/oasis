@@ -26,7 +26,7 @@ func (p *uppercaseProcessor) PostLLM(_ context.Context, resp *core.ChatResponse)
 type redactToolProcessor struct{}
 
 func (p *redactToolProcessor) PostTool(_ context.Context, _ core.ToolCall, result *core.ToolResult) error {
-	result.Content = core.TextContent("[redacted] " + string(result.Content))
+	result.Content = "[redacted] " + result.Content
 	return nil
 }
 

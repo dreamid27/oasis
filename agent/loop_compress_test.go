@@ -60,7 +60,7 @@ func TestCompressMessagesRoutesThroughCompactor(t *testing.T) {
 		{Role: "user", ToolCallID: "tc2", Content: "result of tc2"},
 	}
 
-	compressed, _ := compressMessages(context.Background(), cfg, AgentTask{}, msgs, 1, 100)
+	compressed, _ := compressMessages(context.Background(), &cfg, AgentTask{}, msgs, 1, 100)
 
 	// The fake compactor should have been called exactly once.
 	scopes := fake.recordedScopes()
@@ -111,7 +111,7 @@ func TestCompressMessagesFallbackToInlineCompactor(t *testing.T) {
 		{Role: "user", ToolCallID: "tc2", Content: "another result"},
 	}
 
-	compressed, _ := compressMessages(context.Background(), cfg, AgentTask{}, msgs, 1, 100)
+	compressed, _ := compressMessages(context.Background(), &cfg, AgentTask{}, msgs, 1, 100)
 
 	// The inline compactor's LLM call should produce a summary message.
 	var foundSummary bool
@@ -143,7 +143,7 @@ func TestCompressMessagesNoOpWhenNothingToCompress(t *testing.T) {
 		{Role: "assistant", Content: "world"},
 	}
 
-	compressed, count := compressMessages(context.Background(), cfg, AgentTask{}, msgs, 1, 42)
+	compressed, count := compressMessages(context.Background(), &cfg, AgentTask{}, msgs, 1, 42)
 
 	if len(fake.recordedScopes()) != 0 {
 		t.Error("Compact should not be called when there is nothing to compress")

@@ -69,6 +69,48 @@ func TestRestartOnFail_GivesUpAfterLimit(t *testing.T) {
 	}
 }
 
+func TestRestartOnFail_BackoffBetweenAttempts(t *testing.T) {
+	t.Run("delay is respected between attempts", func(t *testing.T) {
+		delay := 50 * time.Millisecond
+		f := &flakeyAgent{failFor: 2}
+		wrapped := RestartOnFail(3, delay).Wrap(f)
+		start := time.Now()
+		res, err := wrapped.Execute(context.Background(), core.AgentTask{})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("expected success, got %v", err)
+		}
+		if res.Output != "ok" {
+			t.Fatalf("Output: %q", res.Output)
+		}
+		// 2 failures → 2 delays before the 3rd (successful) attempt
+		minExpected := 2 * delay
+		if elapsed < minExpected {
+			t.Fatalf("elapsed %v < expected minimum %v; delay was not observed", elapsed, minExpected)
+		}
+	})
+
+	t.Run("ctx cancellation during delay returns immediately", func(t *testing.T) {
+		delay := 10 * time.Second // long enough that it would never fire naturally
+		f := &flakeyAgent{failFor: 99}
+		wrapped := RestartOnFail(5, delay).Wrap(f)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		_, err := wrapped.Execute(ctx, core.AgentTask{})
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected an error due to context cancellation")
+		}
+		if elapsed >= time.Second {
+			t.Fatalf("ctx cancellation took too long: %v", elapsed)
+		}
+	})
+}
+
 func TestFallback_UsesBackupOnError(t *testing.T) {
 	primary := &fixedAgent{name: "primary", err: errors.New("boom")}
 	backup := &fixedAgent{name: "backup", out: "rescued"}

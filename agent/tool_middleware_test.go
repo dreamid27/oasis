@@ -22,7 +22,7 @@ func (r *recordingTool) Definition() core.ToolDefinition {
 }
 func (r *recordingTool) ExecuteRaw(ctx context.Context, _ json.RawMessage) (core.ToolResult, error) {
 	*r.called = true
-	return core.ToolResult{Content: json.RawMessage(`"ok"`)}, nil
+	return core.ToolResult{Content: "ok"}, nil
 }
 
 type mwWrapper struct {
@@ -62,7 +62,7 @@ func TestWithToolMiddleware_WrapsRegisteredTools(t *testing.T) {
 	if !wrapperCalled {
 		t.Error("middleware wrapper not invoked")
 	}
-	if string(result.Content) != `"ok"` {
+	if result.Content != "ok" {
 		t.Errorf("result.Content = %s, want \"ok\"", result.Content)
 	}
 }
@@ -106,7 +106,7 @@ func TestTransformMiddleware_MutatesResult(t *testing.T) {
 		&recordingTool{called: new(bool)},
 		[]core.ToolMiddleware{
 			TransformMiddleware(func(name string, r core.ToolResult) core.ToolResult {
-				return core.ToolResult{Content: json.RawMessage(`"transformed"`)}
+				return core.ToolResult{Content: "transformed"}
 			}),
 		},
 	)
@@ -115,7 +115,7 @@ func TestTransformMiddleware_MutatesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRaw err = %v", err)
 	}
-	if got := string(result.Content); got != `"transformed"` {
+	if got := result.Content; got != "transformed" {
 		t.Errorf("Content = %s, want \"transformed\"", got)
 	}
 }

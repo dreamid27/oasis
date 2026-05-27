@@ -164,8 +164,8 @@ func TestAgentResult_ToolResults_RoundTripLargePayload(t *testing.T) {
 		t.Fatalf("ToolResults len = %d, want 1", len(results))
 	}
 	var got payload
-	if err := json.Unmarshal(results[0].Content, &got); err != nil {
-		t.Fatalf("Unmarshal ToolResults[0].Content: %v (Content=%q)", err, string(results[0].Content))
+	if err := json.Unmarshal([]byte(results[0].Content), &got); err != nil {
+		t.Fatalf("Unmarshal ToolResults[0].Content: %v (Content=%q)", err, results[0].Content)
 	}
 	if got != want {
 		t.Errorf("round-trip mismatch:\n  got  %+v\n  want %+v", got, want)

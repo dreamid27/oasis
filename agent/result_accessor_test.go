@@ -11,7 +11,11 @@ import (
 // Task 3.1 — FinishReason set on natural stop.
 func TestAgentResultFinishReasonNaturalStop(t *testing.T) {
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{Content: "done", FinishReason: core.FinishStop}, nil
 	})
 	a := New("t", "test", provider)
@@ -35,7 +39,11 @@ func TestAgentResultSuspendPayload(t *testing.T) {
 // Task 3.3 — Warnings and ProviderMeta carried from the last LLM call.
 func TestAgentResultWarningsAndProviderMeta(t *testing.T) {
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{
 			Content:      "ok",
 			FinishReason: core.FinishStop,
@@ -60,7 +68,11 @@ func TestAgentResultWarningsAndProviderMeta(t *testing.T) {
 func TestAgentResultWarningsAccumulateAcrossIterations(t *testing.T) {
 	iter := 0
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		i := iter
 		iter++
 		if i == 0 {
@@ -79,7 +91,7 @@ func TestAgentResultWarningsAccumulateAcrossIterations(t *testing.T) {
 		}, nil
 	})
 	noop := newFnTool("noop", func(ctx context.Context, args json.RawMessage) (core.ToolResult, error) {
-		return core.ToolResult{Content: []byte(`"ok"`)}, nil
+		return core.ToolResult{Content: "ok"}, nil
 	})
 	a := New("t", "test", provider, WithTools(noop))
 	result, err := a.Execute(context.Background(), AgentTask{Input: "x"})
@@ -94,7 +106,11 @@ func TestAgentResultWarningsAccumulateAcrossIterations(t *testing.T) {
 // Task 4.3 — Iterations populated per LLM call.
 func TestAgentResultIterationsPopulated(t *testing.T) {
 	provider := newFnProvider(func(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{
 			Content:      "ok",
 			Usage:        core.Usage{InputTokens: 10, OutputTokens: 5},
@@ -130,7 +146,11 @@ func TestAgentResultFilesAggregated(t *testing.T) {
 			Name:    "report.pdf",
 			Content: `{"name":"report.pdf","mime_type":"application/pdf","size":1234}`,
 		}
+		if ch != nil {
+			if ch != nil {
 		close(ch)
+	}
+		}
 		return core.ChatResponse{Content: "done", FinishReason: core.FinishStop}, nil
 	})
 	a := New("t", "test", provider)

@@ -347,7 +347,9 @@ type mockGraphProvider struct {
 }
 
 func (m *mockGraphProvider) ChatStream(_ context.Context, req oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if m.capturePrompt != nil && len(req.Messages) > 0 {
 		*m.capturePrompt = req.Messages[0].Content
 	}

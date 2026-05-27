@@ -13,7 +13,9 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string { return "fake" }
 func (f *fakeProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	return f.response, nil
 }
 

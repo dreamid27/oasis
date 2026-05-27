@@ -22,9 +22,11 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) ChatStream(_ context.Context, _ oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: "hello"}
-	ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: " world"}
-	close(ch)
+	if ch != nil {
+		ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: "hello"}
+		ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: " world"}
+		close(ch)
+	}
 	return m.chatResp, m.chatErr
 }
 
@@ -37,14 +39,15 @@ type mockProviderManyEvents struct {
 
 func (m *mockProviderManyEvents) Name() string { return m.name }
 func (m *mockProviderManyEvents) ChatStream(_ context.Context, _ oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
-	for i := range m.count {
-		select {
-		case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: string(rune('a' + i%26))}:
-		default:
-			// Channel full — stop sending to avoid blocking forever in tests.
+	if ch != nil {
+		for i := range m.count {
+			select {
+			case ch <- oasis.StreamEvent{Type: oasis.EventTextDelta, Content: string(rune('a' + i%26))}:
+			default:
+			}
 		}
+		close(ch)
 	}
-	close(ch)
 	return m.chatResp, nil
 }
 
@@ -288,7 +291,7 @@ func TestObservedToolDefinition(t *testing.T) {
 }
 
 func TestObservedToolExecute(t *testing.T) {
-	want := oasis.ToolResult{Content: json.RawMessage(`"result data"`)}
+	want := oasis.ToolResult{Content: "result data"}
 	inner := &mockTool{def: oasis.ToolDefinition{Name: "search"}, result: want}
 	ot := WrapTool(inner, testInstruments(t))
 
@@ -296,7 +299,7 @@ func TestObservedToolExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRaw returned unexpected error: %v", err)
 	}
-	if string(got.Content) != string(want.Content) {
+	if got.Content != want.Content {
 		t.Errorf("Content = %q, want %q", got.Content, want.Content)
 	}
 	if got.Error != "" {

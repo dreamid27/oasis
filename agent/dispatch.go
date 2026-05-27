@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
@@ -14,18 +13,6 @@ import (
 
 // DispatchResult, DispatchFunc, ToolExecFunc, ToolExecStreamFunc are defined in
 // internal/runtime and re-exported as type aliases in agent/agent.go.
-
-// rawMessageToString converts json.RawMessage to a string for DispatchResult.Content.
-// JSON string literals are unquoted so plain-text tools produce readable text.
-// JSON objects and arrays are returned as-is (verbatim JSON string).
-func rawMessageToString(raw json.RawMessage) string {
-	if len(raw) >= 2 && raw[0] == '"' {
-		if s, err := strconv.Unquote(string(raw)); err == nil {
-			return s
-		}
-	}
-	return string(raw)
-}
 
 // toolResultToDispatch converts a ToolResult and error into a DispatchResult.
 // Centralizes the error-prefix convention used across all tool dispatch paths.
@@ -36,7 +23,7 @@ func toolResultToDispatch(result core.ToolResult, err error) DispatchResult {
 	if result.Error != "" {
 		return DispatchResult{Content: "error: " + result.Error, IsError: true}
 	}
-	return DispatchResult{Content: rawMessageToString(result.Content), Attachments: result.Attachments}
+	return DispatchResult{Content: result.Content, Attachments: result.Attachments}
 }
 
 // DispatchTool executes a tool via the given executor and converts the result

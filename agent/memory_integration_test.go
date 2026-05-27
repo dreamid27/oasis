@@ -54,8 +54,11 @@ func (s *stubStore) SearchSemantic(_ context.Context, _ []float32, _ memory.Filt
 	return nil, nil
 }
 
-// Verify stubStore satisfies memory.Store at compile time.
-var _ memory.Store = (*stubStore)(nil)
+// Verify stubStore satisfies core.Store + memory.ItemStore at compile time.
+var (
+	_ core.Store      = (*stubStore)(nil)
+	_ memory.ItemStore = (*stubStore)(nil)
+)
 
 // recordingStore tracks calls to StoreMessage, CreateThread, UpdateThread
 // and returns canned history.
@@ -414,7 +417,9 @@ func (p *capturingProvider) firstCall() core.ChatRequest {
 }
 
 func (p *capturingProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.record(req)
 	if p.extractionResp != nil {
 		p.mu.Lock()
@@ -424,7 +429,9 @@ func (p *capturingProvider) ChatStream(_ context.Context, req core.ChatRequest, 
 			return *p.extractionResp, nil
 		}
 	}
-	ch <- core.StreamEvent{Type: core.EventTextDelta, Content: p.resp.Content}
+	if ch != nil {
+		ch <- core.StreamEvent{Type: core.EventTextDelta, Content: p.resp.Content}
+	}
 	return p.resp, nil
 }
 

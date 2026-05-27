@@ -137,7 +137,7 @@ func (t recallTool) ExecuteRaw(ctx context.Context, args json.RawMessage) (core.
 		})
 	}
 	b, _ := json.Marshal(out)
-	return core.ToolResult{Content: b}, nil
+	return core.ToolResult{Content: string(b)}, nil
 }
 
 // --- forgetTool ---
@@ -250,10 +250,8 @@ func scopeFromStr(s string) Scope {
 	}
 }
 
-// textResult wraps a plain string as a ToolResult.Content JSON string value.
 func textResult(s string) core.ToolResult {
-	b, _ := json.Marshal(s)
-	return core.ToolResult{Content: b}
+	return core.ToolResult{Content: s}
 }
 
 // errResult returns a ToolResult with the Error field set.

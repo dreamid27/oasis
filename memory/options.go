@@ -3,7 +3,6 @@ package memory
 
 import (
 	"log/slog"
-	"time"
 
 	"github.com/nevindra/oasis/core"
 )
@@ -25,17 +24,54 @@ func WithProvider(p core.Provider) Option {
 	return func(c *AgentMemoryConfig) { c.Provider = p }
 }
 
+// HistoryConfig groups settings for history loading and trimming.
+type HistoryConfig struct {
+	MaxMessages  int                    // max messages to load (default 10)
+	MaxTokens    int                    // token budget; 0 = no cap
+	Semantic     bool                   // use semantic-similarity trimming when over budget
+	TrimEmbedder core.EmbeddingProvider // nil = use main embedder
+	KeepRecent   int                    // messages to keep regardless of relevance (default 3 when Semantic=true)
+}
+
+// WithHistory configures history loading and trimming from a single HistoryConfig.
+// This is the preferred way to configure history; it replaces the five individual
+// options (WithMaxHistory, WithMaxTokens, WithSemanticTrimming,
+// WithSemanticTrimEmbedding, WithKeepRecent).
+func WithHistory(cfg HistoryConfig) Option {
+	return func(c *AgentMemoryConfig) {
+		if cfg.MaxMessages > 0 {
+			c.MaxHistory = cfg.MaxMessages
+		}
+		if cfg.MaxTokens > 0 {
+			c.MaxTokens = cfg.MaxTokens
+		}
+		c.SemanticTrimming = cfg.Semantic
+		c.TrimmingEmbedding = cfg.TrimEmbedder
+		if cfg.KeepRecent > 0 {
+			c.KeepRecent = cfg.KeepRecent
+		}
+	}
+}
+
+// Deprecated: use WithHistory instead.
+//
 // WithMaxHistory sets how many recent messages to load (default 10).
 func WithMaxHistory(n int) Option { return func(c *AgentMemoryConfig) { c.MaxHistory = n } }
 
+// Deprecated: use WithHistory instead.
+//
 // WithMaxTokens caps the history portion of the prompt at n tokens.
 func WithMaxTokens(n int) Option { return func(c *AgentMemoryConfig) { c.MaxTokens = n } }
 
+// Deprecated: use WithHistory instead.
+//
 // WithSemanticTrimming enables semantic-similarity trimming when over MaxTokens.
 func WithSemanticTrimming() Option {
 	return func(c *AgentMemoryConfig) { c.SemanticTrimming = true }
 }
 
+// Deprecated: use WithHistory instead.
+//
 // WithSemanticTrimEmbedding configures a separate embedding provider for semantic
 // history trimming, so a smaller/faster model can be used here than for
 // cross-thread recall (WithEmbedding). If unset, WithEmbedding's provider is used.
@@ -43,6 +79,8 @@ func WithSemanticTrimEmbedding(e core.EmbeddingProvider) Option {
 	return func(c *AgentMemoryConfig) { c.TrimmingEmbedding = e }
 }
 
+// Deprecated: use WithHistory instead.
+//
 // WithKeepRecent sets how many recent messages SemanticTrim preserves regardless
 // of relevance. Default 3.
 func WithKeepRecent(n int) Option {
@@ -106,11 +144,6 @@ func WithWorkingMemoryScope(s ScopeKind) Option {
 
 // WithAutoTitle enables LLM-driven thread title generation on the first turn.
 func WithAutoTitle() Option { return func(c *AgentMemoryConfig) { c.AutoTitle = true } }
-
-// WithDecayInterval reserved for future use; v1 uses probabilistic per-turn decay.
-func WithDecayInterval(d time.Duration) Option {
-	return func(c *AgentMemoryConfig) { /* reserved */ _ = d }
-}
 
 // WithTools registers agent-callable memory tools. Default OFF; pass
 // the tools you want — typically constructed from an AgentMemory like:

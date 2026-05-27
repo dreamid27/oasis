@@ -165,7 +165,9 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if m.idx >= len(m.responses) {
 		return core.ChatResponse{}, context.Canceled
 	}
@@ -182,7 +184,9 @@ type callbackProvider struct {
 
 func (c *callbackProvider) Name() string { return c.name }
 func (c *callbackProvider) ChatStream(ctx context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if c.onChat != nil {
 		c.onChat(req)
 	}

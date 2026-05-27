@@ -47,19 +47,27 @@ func WithSupervisorFor(name string, p SupervisorPolicy) Option {
 
 // RestartOnFail retries the child up to maxRestarts times before propagating
 // the failure. A maxRestarts of 0 means no retries (one attempt total).
-func RestartOnFail(maxRestarts int) SupervisorPolicy {
-	return &restartPolicy{max: maxRestarts}
+func RestartOnFail(maxRestarts int, delay ...time.Duration) SupervisorPolicy {
+	var d time.Duration
+	if len(delay) > 0 {
+		d = delay[0]
+	}
+	return &restartPolicy{max: maxRestarts, delay: d}
 }
 
-type restartPolicy struct{ max int }
+type restartPolicy struct {
+	max   int
+	delay time.Duration
+}
 
 func (p *restartPolicy) Wrap(child core.Agent) core.Agent {
-	return &restartAgent{Agent: child, max: p.max}
+	return &restartAgent{Agent: child, max: p.max, delay: p.delay}
 }
 
 type restartAgent struct {
 	core.Agent
-	max int
+	max   int
+	delay time.Duration
 }
 
 // Unwrap returns the wrapped child so topology and dispatch can see through
@@ -77,6 +85,13 @@ func (r *restartAgent) Execute(ctx context.Context, task core.AgentTask, opts ..
 			return res, nil
 		}
 		lastErr = err
+		if r.delay > 0 && attempt < r.max {
+			select {
+			case <-time.After(r.delay):
+			case <-ctx.Done():
+				return core.AgentResult{}, ctx.Err()
+			}
+		}
 	}
 	return core.AgentResult{}, lastErr
 }

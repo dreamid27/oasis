@@ -147,7 +147,7 @@ func TestRunLoopPostProcessorSuspend(t *testing.T) {
 		Dispatch:   func(_ context.Context, tc core.ToolCall) DispatchResult { return DispatchResult{Content: "ok"} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -187,7 +187,7 @@ func TestRunLoopSuspendResume(t *testing.T) {
 		Dispatch:   func(_ context.Context, tc core.ToolCall) DispatchResult { return DispatchResult{Content: "deleted"} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "delete item"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "delete item"}, nil)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -224,7 +224,7 @@ func TestRunLoopSuspendClosesStreamChannel(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 10)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -256,7 +256,7 @@ func TestRunLoopPreProcessorSuspend(t *testing.T) {
 		Dispatch:   func(_ context.Context, tc core.ToolCall) DispatchResult { return DispatchResult{Content: "ok"} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -293,7 +293,7 @@ func TestRunLoopPostToolProcessorSuspend(t *testing.T) {
 		Dispatch:   func(_ context.Context, tc core.ToolCall) DispatchResult { return DispatchResult{Content: "executed"} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -560,7 +560,7 @@ func TestTypedSuspendRespectsTTL(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -602,7 +602,7 @@ func TestTypedSuspendRespectsBudget(t *testing.T) {
 	}
 
 	// First suspend lands inside the budget.
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -614,7 +614,7 @@ func TestTypedSuspendRespectsBudget(t *testing.T) {
 	// Second suspend should be over budget — checkSuspendLoop returns nil and
 	// the original processor error propagates. Behavior should match the
 	// existing untyped budget test.
-	_, err = runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err = runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	if err == nil {
 		t.Fatal("expected over-budget error, got nil")
 	}
@@ -831,7 +831,7 @@ func TestEventToolCallSuspendedFires(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -884,7 +884,7 @@ func TestEventProcessorSuspendedFiresPreLLM(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -932,7 +932,7 @@ func TestEventProcessorSuspendedFiresPostLLM(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -979,7 +979,7 @@ func TestEventOrderingOnToolSuspend(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -1058,7 +1058,7 @@ func TestTypedProtocolPropagatesToEvents(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -1103,7 +1103,7 @@ func TestUntypedSuspendHasEmptyProtocolEverywhere(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -1145,7 +1145,7 @@ func TestIterationTraceFinishReasonOnSuspend(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	res, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	res, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -1282,7 +1282,7 @@ func TestChannelClosesAfterRunFinish(t *testing.T) {
 	}
 
 	ch := make(chan core.StreamEvent, 64)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
@@ -1324,7 +1324,7 @@ func TestUntypedSuspendHasEmptyTag(t *testing.T) {
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1363,7 +1363,7 @@ func TestSuspendFormatFnInjectsCustomMessage(t *testing.T) {
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
 
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1487,7 +1487,7 @@ func TestPayloadFromReturnsTypedReq(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1527,7 +1527,7 @@ func TestPayloadFromTagMismatch(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1571,7 +1571,7 @@ func TestResumeAppliesRenderResume(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1614,7 +1614,7 @@ func TestResumeTagMismatch(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1656,7 +1656,7 @@ func TestResumeStreamDeliversEvents(t *testing.T) {
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
 	ch := make(chan core.StreamEvent, 16)
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, ch)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, ch)
 	// Drain the initial run's channel (runLoop already closed it).
 	for range ch {
 	}
@@ -1696,7 +1696,7 @@ func TestPayloadFromOnUntypedSuspend(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1738,7 +1738,7 @@ func TestUntypedResumeOnTypedSuspendStillFormats(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)
@@ -1779,7 +1779,7 @@ func TestResumeIsSingleUse(t *testing.T) {
 		Mem:        &memory.AgentMemory{},
 		Dispatch:   func(_ context.Context, _ core.ToolCall) DispatchResult { return DispatchResult{} },
 	}
-	_, err := runLoop(context.Background(), cfg, AgentTask{Input: "go"}, nil)
+	_, err := runLoop(context.Background(), &cfg, AgentTask{Input: "go"}, nil)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expected ErrSuspended, got %v", err)

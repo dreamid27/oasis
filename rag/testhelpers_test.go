@@ -41,30 +41,8 @@ func (nopStore) GetChunksByIDs(_ context.Context, _ []string) ([]core.Chunk, err
 }
 func (nopStore) GetConfig(_ context.Context, _ string) (string, error) { return "", nil }
 func (nopStore) SetConfig(_ context.Context, _, _ string) error        { return nil }
-func (nopStore) CreateScheduledAction(_ context.Context, _ core.ScheduledAction) error {
-	return nil
-}
-func (nopStore) ListScheduledActions(_ context.Context) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-func (nopStore) GetDueScheduledActions(_ context.Context, _ int64) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-func (nopStore) UpdateScheduledAction(_ context.Context, _ core.ScheduledAction) error {
-	return nil
-}
-func (nopStore) UpdateScheduledActionEnabled(_ context.Context, _ string, _ bool) error {
-	return nil
-}
-func (nopStore) DeleteScheduledAction(_ context.Context, _ string) error {
-	return nil
-}
-func (nopStore) DeleteAllScheduledActions(_ context.Context) (int, error) { return 0, nil }
-func (nopStore) FindScheduledActionsByDescription(_ context.Context, _ string) ([]core.ScheduledAction, error) {
-	return nil, nil
-}
-func (nopStore) Init(_ context.Context) error { return nil }
-func (nopStore) Close() error                 { return nil }
+func (nopStore) Init(_ context.Context) error                          { return nil }
+func (nopStore) Close() error                                          { return nil }
 
 // mockProvider is a deterministic stub Provider for retriever tests.
 type mockProvider struct {
@@ -75,7 +53,9 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) ChatStream(_ context.Context, _ core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	if m.idx >= len(m.responses) {
 		return core.ChatResponse{Content: "exhausted"}, nil
 	}

@@ -61,8 +61,9 @@ type ErrSuspended = agent.ErrSuspended
 
 // --- Protocol types ---
 
-type Store            = core.Store
-type ToolDefinition   = core.ToolDefinition
+type Store                = core.Store
+type ScheduledActionStore = core.ScheduledActionStore
+type ToolDefinition       = core.ToolDefinition
 type StreamEvent      = core.StreamEvent
 type StreamEventType  = core.StreamEventType
 type FinishReason     = core.FinishReason
@@ -210,8 +211,8 @@ func Erase[In, Out any](t core.Tool[In, Out]) core.AnyTool { return core.Erase(t
 // TextResult is a convenience for tools producing plain text. See [core.TextResult].
 var TextResult = core.TextResult
 
-// JSONResult marshals any value into a ToolResult. See [core.JSONResult].
-var JSONResult = core.JSONResult
+// JSONResult marshals v into a ToolResult. See [core.JSONResult].
+func JSONResult[T any](v T) ToolResult { return core.JSONResult(v) }
 
 // ErrorResult returns a ToolResult with the Error field set. See [core.ErrorResult].
 var ErrorResult = core.ErrorResult

@@ -30,14 +30,14 @@ func trimHistoryOldestFirst(messages []core.ChatMessage, historyStart, historyEn
 	return trimmed
 }
 
-// trimHistorySemantic drops messages with the lowest cosine similarity to
-// inputEmbedding first, while preserving the most-recent keepRecent messages.
-// Falls back to oldest-first on any embedding-pipeline failure.
-func (m *AgentMemory) trimHistorySemantic(ctx context.Context, messages []core.ChatMessage, historyStart, historyEnd, totalTokens, budget int, inputEmbedding []float32, keepRecent int) []core.ChatMessage {
-	if m.embedding == nil || len(inputEmbedding) == 0 || historyEnd-historyStart <= keepRecent {
+// doSemanticTrim is the core semantic-trim algorithm. It drops messages with
+// the lowest cosine similarity to inputEmbedding first, while preserving the
+// most-recent keepRecent messages. Falls back to oldest-first on any
+// embedding-pipeline failure. cache may be nil (no caching).
+func doSemanticTrim(ctx context.Context, embedder core.EmbeddingProvider, cache *embeddingCache, messages []core.ChatMessage, historyStart, historyEnd, totalTokens, budget int, inputEmbedding []float32, keepRecent int) []core.ChatMessage {
+	if embedder == nil || len(inputEmbedding) == 0 || historyEnd-historyStart <= keepRecent {
 		return trimHistoryOldestFirst(messages, historyStart, historyEnd, totalTokens, budget)
 	}
-	m.initTrimCache()
 	olderEnd := historyEnd - keepRecent
 	olderCount := olderEnd - historyStart
 	olderEmbeddings := make([][]float32, olderCount)
@@ -45,21 +45,25 @@ func (m *AgentMemory) trimHistorySemantic(ctx context.Context, messages []core.C
 	var missSlots []int
 	for i := 0; i < olderCount; i++ {
 		text := messages[historyStart+i].Content
-		if cached, ok := m.trimCache.get(text); ok {
-			olderEmbeddings[i] = cached
-			continue
+		if cache != nil {
+			if cached, ok := cache.get(text); ok {
+				olderEmbeddings[i] = cached
+				continue
+			}
 		}
 		missTexts = append(missTexts, text)
 		missSlots = append(missSlots, i)
 	}
 	if len(missTexts) > 0 {
-		embs, err := m.embedding.Embed(ctx, missTexts)
+		embs, err := embedder.Embed(ctx, missTexts)
 		if err != nil || len(embs) != len(missTexts) {
 			return trimHistoryOldestFirst(messages, historyStart, historyEnd, totalTokens, budget)
 		}
 		for i, e := range embs {
 			olderEmbeddings[missSlots[i]] = e
-			m.trimCache.put(missTexts[i], e)
+			if cache != nil {
+				cache.put(missTexts[i], e)
+			}
 		}
 	}
 	type scored struct {
@@ -87,4 +91,12 @@ func (m *AgentMemory) trimHistorySemantic(ctx context.Context, messages []core.C
 		}
 	}
 	return out
+}
+
+// trimHistorySemantic drops messages with the lowest cosine similarity to
+// inputEmbedding first, while preserving the most-recent keepRecent messages.
+// Falls back to oldest-first on any embedding-pipeline failure.
+func (m *AgentMemory) trimHistorySemantic(ctx context.Context, messages []core.ChatMessage, historyStart, historyEnd, totalTokens, budget int, inputEmbedding []float32, keepRecent int) []core.ChatMessage {
+	m.initTrimCache()
+	return doSemanticTrim(ctx, m.embedding, m.trimCache, messages, historyStart, historyEnd, totalTokens, budget, inputEmbedding, keepRecent)
 }

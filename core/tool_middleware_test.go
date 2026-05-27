@@ -17,7 +17,7 @@ func (s *stubTool) Definition() ToolDefinition {
 }
 func (s *stubTool) ExecuteRaw(ctx context.Context, _ json.RawMessage) (ToolResult, error) {
 	*s.hits++
-	return ToolResult{Content: json.RawMessage(`"ok"`)}, nil
+	return ToolResult{Content: "ok"}, nil
 }
 
 func incrementMiddleware(counter *int) ToolMiddleware {

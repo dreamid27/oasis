@@ -40,7 +40,9 @@ type sequentialProvider struct {
 
 func (p *sequentialProvider) Name() string { return "sequential" }
 func (p *sequentialProvider) ChatStream(_ context.Context, req core.ChatRequest, ch chan<- core.StreamEvent) (core.ChatResponse, error) {
-	defer close(ch)
+	if ch != nil {
+		defer close(ch)
+	}
 	p.captured = append(p.captured, req)
 	idx := p.calls
 	if idx >= len(p.responses) {

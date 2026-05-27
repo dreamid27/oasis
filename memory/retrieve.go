@@ -61,10 +61,23 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 		defer span.End()
 	}
 
+	// Fast path: skip the full retrieve pipeline when no memory backend is configured.
+	if m.store == nil && m.itemStore == nil && m.embedding == nil &&
+		len(m.retrieveProcs) == 0 && !m.semanticRecall && m.maxTokens == 0 {
+		var out []core.ChatMessage
+		if strings.TrimSpace(systemPrompt) != "" {
+			out = append(out, core.SystemMessage(systemPrompt))
+		}
+		out = append(out, core.ChatMessage{
+			Role: core.RoleUser, Content: task.Input, Attachments: task.Attachments,
+		})
+		return out
+	}
+
 	in := &RetrieveContext{
 		AgentName:    agentName,
 		Task:         task,
-		Selected:     map[Kind][]MemoryItem{},
+		Selected:     nil,
 		SystemPrompt: systemPrompt,
 		Store:        m.itemStore,
 		HistoryStore: m.store,
@@ -72,7 +85,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 		Logger:       m.logger,
 	}
 
-	runRetrievePipeline(ctx, in, m.defaultRetrieveChain())
+	runRetrievePipeline(ctx, in, m.cachedRetrieveChain)
 
 	// Assemble final []core.ChatMessage.
 	//
@@ -88,7 +101,7 @@ func (m *AgentMemory) BuildMessages(ctx context.Context, agentName, systemPrompt
 	// the system message. They are still authoritative content — the
 	// <context>...</context> wrapper signals to the LLM that this is retrieved
 	// context rather than user instruction.
-	var out []core.ChatMessage
+	out := make([]core.ChatMessage, 0, len(in.History)+3)
 	if strings.TrimSpace(systemPrompt) != "" {
 		out = append(out, core.SystemMessage(systemPrompt))
 	}
@@ -123,7 +136,21 @@ func (m *AgentMemory) defaultRetrieveChain() []RetrieveProcessor {
 		chain = append(chain, RecallCrossThread{MinScore: m.semanticMinScore})
 	}
 	if m.maxTokens > 0 {
-		chain = append(chain, TrimToBudget{Budget: m.maxTokens, Semantic: m.semanticTrimming})
+		trimProc := TrimToBudget{
+			Budget:     m.maxTokens,
+			Semantic:   m.semanticTrimming,
+			KeepRecent: m.keepRecent,
+		}
+		if m.semanticTrimming {
+			// Use the dedicated trimming embedder if set, else fall back to the main one.
+			trimProc.Embedder = m.trimmingEmbedding
+			if trimProc.Embedder == nil {
+				trimProc.Embedder = m.embedding
+			}
+			m.initTrimCache()
+			trimProc.TrimCache = m.trimCache
+		}
+		chain = append(chain, trimProc)
 	}
 	chain = append(chain, m.retrieveProcs...)
 	return chain

@@ -71,3 +71,6 @@ func (c *Chain) RunPostTool(ctx context.Context, call core.ToolCall, result *cor
 // Len returns the count of registrations across all stages. A processor
 // registered to multiple stages counts once per registration.
 func (c *Chain) Len() int { return len(c.pre) + len(c.post) + len(c.postTool) }
+
+// HasAny reports whether any processors are registered across all stages.
+func (c *Chain) HasAny() bool { return len(c.pre) > 0 || len(c.post) > 0 || len(c.postTool) > 0 }

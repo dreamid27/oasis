@@ -35,31 +35,31 @@ func (o *ObservedProvider) ChatStream(ctx context.Context, req oasis.ChatRequest
 	defer span.End()
 	start := time.Now()
 
-	// Wrap channel to count chunks.
-	// The goroutine forwards events from wrappedCh to the caller's ch.
-	// We use select with ctx.Done to avoid hanging if the context is cancelled.
-	// Buffer wrappedCh generously so the inner provider never blocks on send,
-	// preventing a deadlock where the goroutine can't drain wrappedCh because
-	// ch is full and nobody reads ch until ChatStream returns.
-	bufSize := max(cap(ch), 64)
-	wrappedCh := make(chan oasis.StreamEvent, bufSize)
+	var resp oasis.ChatResponse
+	var err error
 	chunks := 0
-	done := make(chan struct{})
-	go func() {
-		defer close(ch)
-		defer close(done)
-		for ev := range wrappedCh {
-			chunks++
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 
-	resp, err := o.inner.ChatStream(ctx, req, wrappedCh)
-	<-done // wait for goroutine to finish before reading chunks
+	if ch != nil {
+		bufSize := max(cap(ch), 64)
+		wrappedCh := make(chan oasis.StreamEvent, bufSize)
+		done := make(chan struct{})
+		go func() {
+			defer close(ch)
+			defer close(done)
+			for ev := range wrappedCh {
+				chunks++
+				select {
+				case ch <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		resp, err = o.inner.ChatStream(ctx, req, wrappedCh)
+		<-done
+	} else {
+		resp, err = o.inner.ChatStream(ctx, req, nil)
+	}
 
 	durationMs := float64(time.Since(start).Milliseconds())
 	status := "ok"
