@@ -1,5 +1,6 @@
 .env
 *.db
+*.test
 docs/plans
 docs/internal/
 /bot_example

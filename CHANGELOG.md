@@ -6,6 +6,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+### Added
+
+- **`a2a/` package: A2A (Agent2Agent) v1.0 protocol support.** `a2a.NewServer`
+  exposes any `core.Agent` as an A2A server: JSON-RPC 2.0 + SSE + REST
+  transports, agent card at `/.well-known/agent-card.json`, bounded in-memory
+  task store (capacity 1024, evicts terminal tasks oldest-first), and optional
+  webhook push notifications for long-running async jobs. `a2a.Dial` fetches
+  the agent card and returns a `*RemoteAgent` satisfying `core.Agent` — a
+  remote agent drops into a `network.Network` or `LLMAgent` tool list
+  unchanged. `a2a.AsTool` wraps a `*RemoteAgent` as a `core.AnyTool` for
+  LLM-driven delegation without a Network. Oasis suspend/resume round-trips
+  as A2A `TASK_STATE_INPUT_REQUIRED` in both directions: server-side
+  `FinishSuspended` surfaces as input-required; client-side `FinishSuspended`
+  is resumed by the next `Execute` on the same `ThreadID`. Sentinel errors
+  (`ErrTaskNotFound`, `ErrTaskNotCancelable`, `ErrPushNotSupported`,
+  `ErrUnsupportedOp`, `ErrContentType`, `ErrInvalidAgentResp`) propagate
+  across the wire via `errors.Is`. Zero new dependencies.
+- **`a2a/a2atest` package: test doubles for A2A integrations.**
+  `NewEchoAgent`, `NewBlobAgent`, `NewFailingAgent`, `NewSuspendingAgent`,
+  `NewPanicAgent`, `NewBlockingAgent` stubs cover the full task lifecycle.
+  `Serve(t, handler)` starts an `httptest.Server` and registers cleanup; it
+  takes an `http.Handler` so it composes with auth middleware.
+
 ## [0.19.0] - 2026-06-05
 
 Sandbox browser release: condition-based waiting (`BrowserWait` +

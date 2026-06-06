@@ -25,6 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Processors / guardrails / HITL | [docs/processors/](docs/processors/index.md)          |
 | Storage backends         | [docs/store/](docs/store/index.md)                          |
 | Getting started flow     | [docs/getting-started/](docs/getting-started/index.md)      |
+| A2A protocol (server/client) | [docs/a2a/](docs/a2a/index.md)                          |
 
 When your change affects multiple areas, search for all docs referencing the component name and update each one. Keep docs in sync with code.
 

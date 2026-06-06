@@ -77,6 +77,22 @@ Router-based orchestration: tool-definition building, agent delegation, result f
 | BuildToolDefs/5 | 8 | 0 | 0 | |
 | BuildToolDefs/20 | 8 | 0 | 0 | |
 
+## A2A (Agent-to-Agent Protocol)
+
+Protocol layer overhead: JSON-RPC encoding, task lifecycle management, and binary artifact transport. Agents are mocked with instant responses, servers use the bounded in-memory task store, and round-trip measurements use real TCP sockets via httptest loopback — no simulated network latency.
+
+A JSON+base64 loopback round trip necessarily materializes at least three payload-sized buffers (server encode ~1.33x for base64, client body+decode ~1.33x, decoded bytes 1x), so B/op for LargeArtifact is expected at ~4–6x payload size, not 1x.
+
+| Benchmark | ns/op | B/op | allocs/op | What it measures |
+|-----------|------:|-----:|----------:|------------------|
+| Server_MessageSend | 2,230 | 2,016 | 34 | Handler path: decode → execute → store → encode. **Server baseline tax.** |
+| RoundTrip | 35,031 | 17,621 | 196 | Full client→server loopback. Wire cost above the agent execute baseline (~559 ns). |
+| RoundTrip_Stream | 139,962 | 126,563 | 339 | Streaming loopback: SSE event translation both directions. |
+| RoundTrip_LargeArtifact/10KB | 169,000 | 99,307 | 215 | Binary attachment, 10 KB payload. Base64 wire encoding + decode. |
+| RoundTrip_LargeArtifact/100KB | 2,021,000 | 1,198,978 | 243 | |
+| RoundTrip_LargeArtifact/1024KB | 10,272,000 | 10,823,000 | 261 | |
+| TaskStore | 31 | 0 | 0 | In-memory store under parallel poll. **Zero-alloc read path.** |
+
 ## Memory
 
 Message assembly, fact storage, and recall.
