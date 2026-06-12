@@ -6,6 +6,82 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-12
+
+### Changed
+
+- **Breaking:** `core.SpanAttr.Value` (exported `any` field) is now unexported.
+  Construct attrs exclusively via the typed constructors (`StringAttr`,
+  `IntAttr`, `BoolAttr`, `Float64Attr`) and read the value via the new
+  `SpanAttr.Val()` accessor. Closes the `any`-at-the-boundary hole: the
+  value set is now string/int/float64/bool by construction, and the
+  `fmt.Sprintf("%v")` fallback in the OTEL observer is unreachable.
+- **Breaking:** `ScheduledActionStore.FindScheduledActionsByDescription` is
+  renamed to `ListScheduledActionsByDescription` — it returns a (possibly
+  empty) slice, so the `List<X>` verb convention applies. Signature and
+  semantics are unchanged; rename call sites and implementations 1:1.
+
+### Performance
+
+- **Tool-result store:** `Put`/`Get` on the in-memory `ToolResultStore` no
+  longer run a full TTL sweep over all entries on every call. A `nextExpiry`
+  watermark skips the O(N) scan whenever nothing can have expired — at the
+  default 10,000-entry cap this takes `Put` from ~376µs to ~290ns and `Get`
+  from ~87µs to ~95ns on the common path. TTL and eviction semantics are
+  unchanged.
+
+### Fixed
+
+- **Agent loop:** `AgentResult` no longer aliases pooled memory. Previously
+  the result's `Steps`, `Iterations`, `Warnings`, `Files`, and `Sources`
+  slices shared backing arrays with the process-global `loopState` pool, so
+  any subsequent `Execute` (on any agent) silently overwrote a previously
+  returned result in place. The pool now transfers ownership of those arrays
+  to the result on release (no copying). Cost: each `Execute` allocates the
+  trace memory its result owns — `SingleTurn` goes from 8 to 9 allocs/op
+  (~+176 B); ns/op is unchanged.
+- **Agent loop:** the `OnIterationComplete` snapshot no longer recovers the
+  iteration's first step trace by back-indexing into the bounded step ring.
+  Previously, an iteration emitting more parallel tool calls than
+  `Limits.MaxSteps` panicked with index-out-of-range, and any mid-iteration
+  ring eviction made `IterationSnapshot.Trace` point at a prior iteration's
+  trace. The first trace is now captured forward as it is built.
+- **`core.Func` tools now emit `ToolResult.UI`** when their `Out` implements
+  `core.UIRenderable`, matching `Erase`/`EraseStreaming`. The three erased
+  adapters now share one post-execute tail (`toolResultFromOut`), so the
+  marshal/infra-error/UI behavior can no longer drift between them.
+
+### Added
+
+- **Generative UI primitive.** A tool can mark its output as a renderable
+  frontend component: `core.UIResult(name, props)` (helper) or a typed tool's
+  `Out` implementing `core.UIRenderable`. The agent emits a new
+  `core.EventUIComponent` stream event (carrying the component name in `Name`
+  and props JSON in `Object`) directly after `EventToolCallResult`. Re-exported
+  on the root umbrella as `oasis.UIComponent`, `oasis.UIRenderable`,
+  `oasis.UIResult`, and `oasis.EventUIComponent`. Core loop event emission is
+  unchanged; consumers opt in by handling the new event. Zero new dependencies.
+- **`a2a/` package: A2A (Agent2Agent) v1.0 protocol support.** `a2a.NewServer`
+  exposes any `core.Agent` as an A2A server: JSON-RPC 2.0 + SSE + REST
+  transports, agent card at `/.well-known/agent-card.json`, bounded in-memory
+  task store (capacity 1024, evicts terminal tasks oldest-first), and optional
+  webhook push notifications for long-running async jobs. `a2a.Dial` fetches
+  the agent card and returns a `*RemoteAgent` satisfying `core.Agent` — a
+  remote agent drops into a `network.Network` or `LLMAgent` tool list
+  unchanged. `a2a.AsTool` wraps a `*RemoteAgent` as a `core.AnyTool` for
+  LLM-driven delegation without a Network. Oasis suspend/resume round-trips
+  as A2A `TASK_STATE_INPUT_REQUIRED` in both directions: server-side
+  `FinishSuspended` surfaces as input-required; client-side `FinishSuspended`
+  is resumed by the next `Execute` on the same `ThreadID`. Sentinel errors
+  (`ErrTaskNotFound`, `ErrTaskNotCancelable`, `ErrPushNotSupported`,
+  `ErrUnsupportedOp`, `ErrContentType`, `ErrInvalidAgentResp`) propagate
+  across the wire via `errors.Is`. Zero new dependencies.
+- **`a2a/a2atest` package: test doubles for A2A integrations.**
+  `NewEchoAgent`, `NewBlobAgent`, `NewFailingAgent`, `NewSuspendingAgent`,
+  `NewPanicAgent`, `NewBlockingAgent` stubs cover the full task lifecycle.
+  `Serve(t, handler)` starts an `httptest.Server` and registers cleanup; it
+  takes an `http.Handler` so it composes with auth middleware.
+
 ## [0.19.0] - 2026-06-05
 
 Sandbox browser release: condition-based waiting (`BrowserWait` +
