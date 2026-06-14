@@ -4,13 +4,14 @@
 // for specific tasks. Each skill is a directory containing a SKILL.md file with
 // YAML frontmatter (metadata) and markdown instructions.
 //
-// Skill providers abstract the source of skills — built-in (embedded), file-based,
-// or custom implementations. Chain multiple providers so user skills override
-// built-in ones:
+// Skill providers abstract the source of skills — file-based or custom
+// implementations. Skill content is supplied by the application, not bundled
+// into the framework. Chain multiple providers so project skills override
+// user-level ones:
 //
 //	provider := skills.Chain(
-//		skills.FromDir(dirs...),
-//		skills.Builtin(),
+//		skills.FromDir("./project-skills"),
+//		skills.FromDir(skills.DefaultSkillDirs()...),
 //	)
 //
 // Load a skill and apply any referenced skills:
@@ -21,8 +22,11 @@
 //	}
 //	// skill.Instructions now includes referenced skills
 //
-// Agents automatically register skill-management tools (skill_discover,
-// skill_activate, skill_create, skill_update) when configured with WithSkills.
+// Agents automatically register skill-management tools when configured with
+// WithSkills: skill_discover, skill_activate, and skill_search are always
+// registered; skill_create and skill_update when the provider implements
+// SkillWriter; skill_read and skill_list_resources when it implements
+// SkillResources.
 //
 // See the main oasis package for agent configuration and types.
 package skills

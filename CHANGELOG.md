@@ -4,8 +4,6 @@ All notable changes to this project will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
 ## [1.0.0] - 2026-06-14
 
 First stable release — the exported API is now frozen under semantic
@@ -29,6 +27,16 @@ below are one-time corrections made deliberately before the freeze.
   missing) and the `workflow.ErrOverridesUnsupported` sentinel.
 - **`network.Quorum`** now validates its threshold at construction.
 - **MCP external documentation** under `docs/external/mcp/`.
+- **`skills.SkillResources`** — optional interface exposing companion files
+  (references/scripts/assets) alongside `SKILL.md`; adds the `skill_read` and
+  `skill_list_resources` tools (registered via capability assertion).
+- **`skills.SkillSearcher`** + **`skills.NewBM25Searcher`** — optional
+  ranked-search interface with a built-in stdlib BM25 default; the `skill_search`
+  tool is now always registered (the provider's own searcher or the BM25
+  fallback). Adds the `skills.SkillSearchResult` type.
+- **`agent.WithSkillCatalog`** (re-exported as `oasis.WithSkillCatalog`) —
+  injects available-skill summaries into the system prompt each request;
+  complements the lazy `skill_discover`/`skill_search` tools.
 
 ### Changed
 
@@ -79,8 +87,13 @@ below are one-time corrections made deliberately before the freeze.
 - **Breaking:** `memory` deprecated options (`WithMaxHistory`, `WithMaxTokens`,
   `WithSemanticTrimming`, `WithSemanticTrimEmbedding`, `WithKeepRecent`) → use
   `WithHistory`.
-- **Breaking:** `skills.ChainSkillProviders`/`NewFileSkillProvider`/
-  `NewBuiltinSkillProvider` → use `Chain`/`FromDir`/`Builtin`.
+- **Breaking:** `skills.ChainSkillProviders`/`NewFileSkillProvider` → use
+  `Chain`/`FromDir`.
+- **Breaking:** `skills.Builtin()` and the bundled built-in skills (`oasis-pdf`,
+  `oasis-docx`, `oasis-xlsx`, `oasis-pptx`, `oasis-design-system`) were removed,
+  along with the deprecated `NewBuiltinSkillProvider` constructor. The framework
+  ships no skill content; applications supply skills via `skills.FromDir` or a
+  custom `SkillProvider`.
 
 ### Fixed
 

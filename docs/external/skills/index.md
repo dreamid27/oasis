@@ -10,7 +10,7 @@ A skill is a markdown file on disk that an agent loads on demand to get speciali
 - **Skills vs. memory** — memory is what the agent learned from past conversations; skills are instructions you authored. They compose: a skill tells the agent *how to write a report*; memory tells it *what this user's reporting preferences are*.
 - **Skills vs. RAG** — RAG retrieves relevant documents from a corpus at query time. Skills are curated instruction packages you deliberately wrote, with a name and a description the agent can browse and select.
 - **`WithSkills` vs. `WithActiveSkills`** — use `WithSkills` when you want the agent to discover and self-select at runtime. Use `WithActiveSkills` when you know a skill is always needed and want it injected unconditionally from the first LLM call.
-- **File-based vs. built-in** — use `skills.FromDir(...)` for your own skills; use `skills.Builtin()` to get framework-provided skills (PDF, DOCX, XLSX, PPTX, design-system) without writing any instructions yourself.
+- **File-based vs. custom** — use `skills.FromDir(...)` to load skills your application ships on disk, or implement `SkillProvider` yourself for any other source. The framework provides the machinery; skill *content* is application-supplied (it ships no bundled skills).
 
 **Decision table:**
 
@@ -28,19 +28,26 @@ A skill is a markdown file on disk that an agent loads on demand to get speciali
 ```mermaid
 flowchart TD
     A[startup: WithSkills called] --> B[SkillProvider registered on agent]
-    B --> C[NewSkillTools builds skill_discover / skill_activate\nand skill_create / skill_update if SkillWriter]
-    C --> D[Agent begins Execute loop]
-    D --> E{agent sees task}
-    E --> F[calls skill_discover tool]
-    F --> G[SkillProvider.Discover rescans dirs\nreturns SkillSummary list]
-    G --> H[agent reads descriptions\npicks best match]
-    H --> I[calls skill_activate tool]
-    I --> J[SkillProvider.Activate reads full SKILL.md\nreplaces placeholder dir in instructions]
-    J --> K[framework appends instructions to context]
-    K --> L[agent proceeds with skill in scope]
+    B --> C[NewSkillTools builds skill_discover / skill_activate / skill_search\nand skill_create / skill_update if SkillWriter\nand skill_read / skill_list_resources if SkillResources]
+    C --> D{WithSkillCatalog called?}
+    D -->|yes| E[Catalog injected into system prompt]
+    D -->|no| F[Agent begins Execute loop]
+    E --> F
+    F --> G{agent sees task}
+    G -->|needs to browse| H[calls skill_search or skill_discover tool]
+    H --> I[SkillProvider.Discover/SearchSkills\nreturns ranked SkillSummary list]
+    G -->|has catalog| I
+    I --> J[agent picks best match]
+    J --> K[calls skill_activate tool]
+    K --> L[SkillProvider.Activate reads full SKILL.md\nreplaces placeholder dir in instructions]
+    L --> M[framework appends instructions to context]
+    M --> N[agent proceeds with skill in scope]
+    N -->|needs detail| O[calls skill_read or skill_list_resources]
+    O --> P[SkillResources returns companion file]
+    P --> N
 ```
 
-The left side of the diagram is setup (runs once at agent construction); the right side is runtime (runs for each task execution). The two built-in tool names the LLM calls — `skill_discover` and `skill_activate` — are registered just like any other tool you add with `WithTools`. They appear in the tool list the LLM sees, and the LLM decides when to invoke them.
+The left side of the diagram is setup (runs once at agent construction); the right side is runtime (runs for each task execution). The core tool names — `skill_discover`, `skill_activate`, and `skill_search` — are registered just like any other tool you add with `WithTools`. They appear in the tool list the LLM sees, and the LLM decides when to invoke them.
 
 The provider is scanned on every `Discover` call — no in-process cache — so a skill file you drop on disk is immediately visible without restarting the agent. When `Activate` is called, the framework resolves the `{dir}` placeholder in the instructions body to the absolute path of the skill folder, enabling skill instructions to reference local asset files by path.
 
@@ -79,17 +86,18 @@ The directory name is the canonical identifier. `SkillProvider.Activate("data-an
 ## How it works step by step
 
 1. At agent build time, `WithSkills(provider)` is called. The framework calls `NewSkillTools(provider)` internally.
-2. `NewSkillTools` always returns `skill_discover` and `skill_activate`. If `provider` implements `SkillWriter`, it also returns `skill_create` and `skill_update`.
+2. `NewSkillTools` always returns `skill_discover`, `skill_activate`, and `skill_search`. If `provider` implements `SkillWriter`, it also returns `skill_create` and `skill_update`. If `provider` implements `SkillResources`, it also returns `skill_read` and `skill_list_resources`.
 3. These tools are registered on the agent alongside any tools you added with `WithTools`. No extra code on your part.
-4. The agent begins its execution loop and receives a task from `ag.Execute(ctx, task)`.
-5. The agent calls the `skill_discover` tool. `SkillProvider.Discover` rescans the configured directories (non-existent dirs are silently skipped) and returns `[]SkillSummary` — lightweight objects containing only `Name`, `Description`, `Tags`, and `Compatibility`. Full instructions are not loaded at this stage.
-6. The LLM reads the summaries and decides which skill fits the task. (If none fits, it proceeds without activating one.)
-7. The agent calls `skill_activate` with the chosen skill name.
-8. `SkillProvider.Activate` reads the full `SKILL.md` from disk, parses the YAML frontmatter, and returns a `Skill` struct. Any `{dir}` placeholder in the instructions body is replaced with the absolute folder path before the struct is returned.
-9. The framework appends `skill.Instructions` to the agent's working context for the remainder of this execution.
-10. The agent proceeds with the skill's instructions now in scope — it follows the task steps, uses the recommended tools, and applies the format rules the skill specifies.
-11. If the skill has a `references` field, call `ActivateWithReferences` instead of plain `Activate` (or in code: the `skill_activate` tool handles this path when references are set). Referenced skills' instructions are prepended, separated by `---`, one level deep only.
-12. If the provider implements `SkillWriter`, the agent can also call `skill_create` to persist a new skill it developed during the task, making it immediately discoverable on the next `skill_discover` call — no restart needed.
+4. Optionally, call `WithSkillCatalog()` at agent build time to inject the catalog of available skill summaries into the system prompt on every request — the LLM can browse it before calling any tool.
+5. The agent begins its execution loop and receives a task from `ag.Execute(ctx, task)`.
+6. The agent may call `skill_search` to find skills by free-text query (e.g., "PDF generation"), or `skill_discover` to list all available skills. `SkillProvider.Discover` rescans the configured directories (non-existent dirs are silently skipped) and returns `[]SkillSummary` — lightweight objects containing only `Name`, `Description`, `Tags`, and `Compatibility`. Full instructions are not loaded at this stage. `SearchSkills` scores results by relevance.
+7. The LLM reads the summaries and decides which skill fits the task. (If none fits, it proceeds without activating one.)
+8. The agent calls `skill_activate` with the chosen skill name.
+9. `SkillProvider.Activate` reads the full `SKILL.md` from disk, parses the YAML frontmatter, and returns a `Skill` struct. Any `{dir}` placeholder in the instructions body is replaced with the absolute folder path before the struct is returned.
+10. The framework appends `skill.Instructions` to the agent's working context for the remainder of this execution.
+11. The agent proceeds with the skill's instructions now in scope — it follows the task steps, uses the recommended tools, and applies the format rules the skill specifies. If the agent needs additional detail, it can call `skill_read` to fetch a companion file (e.g., `references/detailed-api.md`).
+12. If the skill has a `references` field, call `ActivateWithReferences` instead of plain `Activate` (or in code: the `skill_activate` tool handles this path when references are set). Referenced skills' instructions are prepended, separated by `---`, one level deep only.
+13. If the provider implements `SkillWriter`, the agent can also call `skill_create` to persist a new skill it developed during the task, making it immediately discoverable on the next `skill_discover` call — no restart needed.
 
 ## SKILL.md format
 
@@ -141,6 +149,60 @@ Load the invoice template from {dir}/templates/invoice.html.
 
 **Assets.** A skill directory can contain any supporting files alongside `SKILL.md` — templates, config files, schemas. Reference them via `{dir}`.
 
+## Progressive disclosure: SKILL.md + companion files
+
+A skill's instructions live in `SKILL.md`, but detailed reference material can live in companion files like `references/api.md`, `scripts/setup.sh`, or `templates/invoice.html`. This pattern keeps the SKILL.md concise and lets the agent fetch detail on demand via `skill_read`.
+
+```
+my-skill/
+  SKILL.md               ← short instructions + overview
+  references/
+    api.md               ← full API reference (fetched on demand)
+    examples.json        ← example payloads
+  scripts/
+    validate.sh
+  templates/
+    template.html
+```
+
+**Why separate?**
+
+- **Token efficiency:** Every activated skill consumes tokens for its full instructions. Keep the SKILL.md body focused on the essential workflow; move encyclopedic detail into companion files.
+- **On-demand fetching:** The agent can call `skill_read("my-skill", "references/api.md")` to pull detailed reference material only when the task requires it.
+- **Works with `{dir}` placeholder:** Companion files are addressable via the `{dir}` placeholder in the instructions, so the agent can construct paths and pass them to tools:
+  ```markdown
+  Load the validation schema from {dir}/schemas/validation.json
+  ```
+
+**Search and discovery still work over SKILL.md.** The `skill_discover` tool returns a summary; `skill_search` ranks skills by name, description, and tags — not by companion file contents. Companion files are read only after activation.
+
+---
+
+## Search: lazy discovery vs. eager catalog
+
+**Lazy discovery** (default): The agent calls `skill_discover` or `skill_search` as needed.
+- `skill_discover` returns all skills as an unsorted list.
+- `skill_search` accepts a free-text query and returns ranked matches (using the provider's `SkillSearcher`, or a built-in BM25 index over name + description + tags + instructions).
+- Both are tool calls — they cost tokens only when the agent decides to invoke them.
+
+**Eager catalog** (opt-in via `WithSkillCatalog`): The full catalog (name, description, tags) is injected into the system prompt on every request.
+- The LLM can browse the catalog without a tool call before it makes its first decision.
+- Costs tokens on every call, even if no skill is needed.
+- Best for agents with a small, stable skill set that is always potentially relevant.
+
+**Search quality**: The built-in BM25 searcher scores skills by name/description/tags/instructions frequency. For domain-specific vocabulary or vector similarity, implement `SkillSearcher` yourself and pass it via the provider or type assertion:
+
+```go
+type MySearcher struct { ... }
+func (s *MySearcher) SearchSkills(ctx context.Context, query string, limit int) ([]skills.SkillSearchResult, error) {
+    // your implementation: vector search, semantic ranking, etc.
+}
+```
+
+The framework will use your searcher when `skill_search` is called, without any code change required.
+
+---
+
 ## Common patterns and gotchas
 
 **Active vs. available skills.** `WithSkills` makes skills *available* — the agent must call `skill_discover` then `skill_activate` before instructions are in scope. `WithActiveSkills` makes skills *active from the first call* — no tool call happens, instructions are appended to the system prompt unconditionally. You can mix both: pre-activate a "house-rules" skill with `WithActiveSkills`, and keep domain skills available via `WithSkills`.
@@ -155,7 +217,7 @@ Load the invoice template from {dir}/templates/invoice.html.
 
 **`DefaultSkillDirs` for AgentSkills-compatible layout.** If you want your project to follow the AgentSkills convention, use `skills.FromDir(skills.DefaultSkillDirs()...)`. This scans `<cwd>/.agents/skills/` (project-level) and `~/.agents/skills/` (user-level). Both are included whether or not they exist yet — `FromDir` handles missing directories gracefully.
 
-**Concurrent safety.** All providers (`fileSkillProvider`, `builtinSkillProvider`, `chainedSkillProvider`) are safe for concurrent use. `Discover` rescans the filesystem on every call with no shared mutable state. Write operations (`CreateSkill`, `UpdateSkill`, `DeleteSkill`) do not hold locks across file I/O — if you need concurrent writes to the same skill name, serialize them in your own code.
+**Concurrent safety.** All providers (`fileSkillProvider`, `chainedSkillProvider`) are safe for concurrent use. `Discover` rescans the filesystem on every call with no shared mutable state. Write operations (`CreateSkill`, `UpdateSkill`, `DeleteSkill`) do not hold locks across file I/O — if you need concurrent writes to the same skill name, serialize them in your own code.
 
 ## Quick example
 
@@ -172,10 +234,10 @@ import (
 )
 
 func main() {
-    // User skills in ./skills override framework built-ins on name collision.
+    // Project skills override user-level skills on name collision.
     provider := skills.Chain(
-        skills.FromDir("./skills"),
-        skills.Builtin(),
+        skills.FromDir("./project-skills"),
+        skills.FromDir(skills.DefaultSkillDirs()...),
     )
 
     llm := openaicompat.New("https://api.openai.com/v1", "gpt-4o", "YOUR_KEY")

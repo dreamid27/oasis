@@ -4,23 +4,44 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/nevindra/oasis/core"
 )
 
+// maxResourceBytes caps skill_read output to protect the model context window.
+const maxResourceBytes = 64 * 1024
+
 // NewSkillTools returns the set of skill-management tools backed by the given
-// SkillProvider. skill_discover and skill_activate are always returned;
-// skill_create and skill_update are included only when the provider also
-// implements SkillWriter.
+// SkillProvider. skill_discover, skill_activate, and skill_search are always
+// returned. skill_create and skill_update are included only when the provider
+// implements SkillWriter; skill_read and skill_list_resources only when it
+// implements SkillResources. skill_search uses the provider's own SkillSearcher
+// when present, else a built-in BM25 searcher.
 func NewSkillTools(provider SkillProvider) []core.AnyTool {
 	tools := []core.AnyTool{
 		core.Erase[skillDiscoverIn, string](&skillDiscoverTool{provider: provider}),
 		core.Erase[skillActivateIn, string](&skillActivateTool{provider: provider}),
 	}
+
+	// Search is always available: prefer the provider's own SkillSearcher,
+	// else fall back to the built-in BM25 searcher.
+	searcher, ok := provider.(SkillSearcher)
+	if !ok {
+		searcher = NewBM25Searcher(provider)
+	}
+	tools = append(tools, core.Erase[skillSearchIn, string](&skillSearchTool{searcher: searcher}))
+
 	if w, ok := provider.(SkillWriter); ok {
 		tools = append(tools,
 			core.Erase[skillCreateIn, string](&skillCreateTool{writer: w}),
 			core.Erase[skillUpdateIn, string](&skillUpdateTool{provider: provider, writer: w}),
+		)
+	}
+	if r, ok := provider.(SkillResources); ok {
+		tools = append(tools,
+			core.Erase[skillListResourcesIn, string](&skillListResourcesTool{resources: r}),
+			core.Erase[skillReadIn, string](&skillReadTool{resources: r}),
 		)
 	}
 	return tools
@@ -218,10 +239,134 @@ func (t *skillUpdateTool) Execute(ctx context.Context, in skillUpdateIn) (string
 	return fmt.Sprintf("updated skill %q: %s", existing.Name, strings.Join(changes, ", ")), nil
 }
 
+// --- skill_search ---
+
+type skillSearchIn struct {
+	Query string `json:"query" describe:"Free-text description of the task or topic to find a skill for"`
+	Limit int    `json:"limit,omitempty" describe:"Maximum number of results (default 5)"`
+}
+
+type skillSearchTool struct {
+	searcher SkillSearcher
+}
+
+func (t *skillSearchTool) Definition() core.ToolMeta {
+	return core.ToolMeta{
+		Name:        "skill_search",
+		Description: "Search available skills by topic or task description; returns the best matches ranked by relevance. Use this to find a skill when you don't know its exact name.",
+	}
+}
+
+func (t *skillSearchTool) Execute(ctx context.Context, in skillSearchIn) (string, error) {
+	if in.Query == "" {
+		return "", fmt.Errorf("query is required")
+	}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	results, err := t.searcher.SearchSkills(ctx, in.Query, limit)
+	if err != nil {
+		return "", fmt.Errorf("search failed: %w", err)
+	}
+	if len(results) == 0 {
+		return "no matching skills found", nil
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "%d matching skill(s):\n\n", len(results))
+	for i, r := range results {
+		fmt.Fprintf(&out, "%d. %s (score %.2f)\n   %s\n", i+1, r.Name, r.Score, r.Description)
+		if len(r.Tags) > 0 {
+			fmt.Fprintf(&out, "   Tags: %s\n", strings.Join(r.Tags, ", "))
+		}
+		fmt.Fprintln(&out)
+	}
+	return out.String(), nil
+}
+
+// --- skill_list_resources ---
+
+type skillListResourcesIn struct {
+	Name string `json:"name" describe:"The name of the skill whose companion files to list"`
+}
+
+type skillListResourcesTool struct {
+	resources SkillResources
+}
+
+func (t *skillListResourcesTool) Definition() core.ToolMeta {
+	return core.ToolMeta{
+		Name:        "skill_list_resources",
+		Description: "List the companion files (references, scripts, assets) bundled with a skill. Use skill_read to read one by its path.",
+	}
+}
+
+func (t *skillListResourcesTool) Execute(ctx context.Context, in skillListResourcesIn) (string, error) {
+	if in.Name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	files, err := t.resources.ListResources(ctx, in.Name)
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return fmt.Sprintf("skill %q has no companion files", in.Name), nil
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "%d file(s) in skill %q:\n", len(files), in.Name)
+	for _, f := range files {
+		fmt.Fprintf(&out, "- %s\n", f)
+	}
+	return out.String(), nil
+}
+
+// --- skill_read ---
+
+type skillReadIn struct {
+	Name string `json:"name" describe:"The name of the skill that owns the file"`
+	Path string `json:"path" describe:"Skill-relative path of the companion file (e.g. references/api.md)"`
+}
+
+type skillReadTool struct {
+	resources SkillResources
+}
+
+func (t *skillReadTool) Definition() core.ToolMeta {
+	return core.ToolMeta{
+		Name:        "skill_read",
+		Description: "Read a companion file bundled with a skill (references, scripts, assets) by its skill-relative path. Call skill_list_resources first to see what files exist.",
+	}
+}
+
+func (t *skillReadTool) Execute(ctx context.Context, in skillReadIn) (string, error) {
+	if in.Name == "" || in.Path == "" {
+		return "", fmt.Errorf("name and path are required")
+	}
+	data, err := t.resources.ReadResource(ctx, in.Name, in.Path)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(data) {
+		return fmt.Sprintf("binary file %q (%d bytes); not shown", in.Path, len(data)), nil
+	}
+	if len(data) > maxResourceBytes {
+		// Trim back to a rune boundary so truncation never splits a UTF-8 rune.
+		cut := maxResourceBytes
+		for cut > 0 && !utf8.RuneStart(data[cut]) {
+			cut--
+		}
+		return string(data[:cut]) + "\n\n[truncated: file exceeds 64KB]", nil
+	}
+	return string(data), nil
+}
+
 // Compile-time interface checks.
 var (
-	_ core.Tool[skillDiscoverIn, string] = (*skillDiscoverTool)(nil)
-	_ core.Tool[skillActivateIn, string] = (*skillActivateTool)(nil)
-	_ core.Tool[skillCreateIn, string]   = (*skillCreateTool)(nil)
-	_ core.Tool[skillUpdateIn, string]   = (*skillUpdateTool)(nil)
+	_ core.Tool[skillDiscoverIn, string]      = (*skillDiscoverTool)(nil)
+	_ core.Tool[skillActivateIn, string]      = (*skillActivateTool)(nil)
+	_ core.Tool[skillCreateIn, string]        = (*skillCreateTool)(nil)
+	_ core.Tool[skillUpdateIn, string]        = (*skillUpdateTool)(nil)
+	_ core.Tool[skillSearchIn, string]        = (*skillSearchTool)(nil)
+	_ core.Tool[skillListResourcesIn, string] = (*skillListResourcesTool)(nil)
+	_ core.Tool[skillReadIn, string]          = (*skillReadTool)(nil)
 )

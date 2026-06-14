@@ -62,8 +62,8 @@ Example instructions.
 // ExampleChain demonstrates the preferred constructor for chaining providers.
 func ExampleChain() {
 	provider := Chain(
-		FromDir(), // would search user directories
-		Builtin(),
+		FromDir("./project-skills"),    // project-level skills win on collision
+		FromDir(DefaultSkillDirs()...), // then user-level skills
 	)
 	summaries, _ := provider.Discover(context.Background())
 	fmt.Printf("Total skills available: %d\n", len(summaries))

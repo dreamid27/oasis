@@ -96,6 +96,10 @@ type Config struct {
 	GenParams           *core.GenerationParams
 	ActiveSkills        []skills.Skill
 	SkillProvider       skills.SkillProvider
+	// SkillCatalog, when true, injects the provider's Discover() summaries into
+	// the system prompt each request so the model sees available skills before
+	// its first tool call. Set via agent.WithSkillCatalog.
+	SkillCatalog bool
 
 	// DisablePromptCaching opts the agent out of automatic cache-breakpoint
 	// placement on its LLM calls. By default (DisablePromptCaching=false), the

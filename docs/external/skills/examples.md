@@ -19,11 +19,11 @@ import (
 )
 
 func main() {
-    // Merge user skills (./skills/) with built-in framework skills.
-    // User skills take precedence on name collisions.
+    // Load the application's skills from disk. Project skills take
+    // precedence over user-level skills on name collisions.
     provider := skills.Chain(
         skills.FromDir("./skills"),
-        skills.Builtin(),
+        skills.FromDir(skills.DefaultSkillDirs()...),
     )
 
     llm := openaicompat.New("https://api.openai.com/v1", "gpt-4o", "YOUR_KEY")
@@ -47,14 +47,14 @@ func main() {
 
 **Plain-English walkthrough:**
 
-- `skills.Chain(...)` creates a merged provider. The file-based provider is searched first.
-- `oasis.WithSkills(provider)` registers `skill_discover`, `skill_activate`, `skill_create`, and `skill_update` tools automatically — you don't add them manually.
+- `skills.Chain(...)` creates a merged provider. The first provider is searched first and wins on name collisions.
+- `oasis.WithSkills(provider)` registers the skill tools automatically — `skill_discover`, `skill_activate`, and `skill_search` always, plus `skill_create`/`skill_update` (when the provider implements `SkillWriter`) and `skill_read`/`skill_list_resources` (when it implements `SkillResources`).
 - The agent's prompt instructs it to use skills. The LLM decides which skill to activate based on the task.
-- For the Excel task, the agent will likely activate `oasis-xlsx` from the built-in library.
+- For the Excel task, the agent will activate whichever spreadsheet skill your application placed in `./skills`.
 
 **Variations:**
 
-- Omit `skills.FromDir(...)` if you only want built-in skills: `skills.Builtin()` directly.
+- Implement `skills.SkillProvider` yourself to load skills from a database, object store, or remote service instead of disk.
 - Pass multiple directories to `FromDir` for project-level + shared team skills: `skills.FromDir("./skills", "/shared/team-skills")`.
 - Use `DefaultSkillDirs()` to follow the AgentSkills convention: `skills.FromDir(skills.DefaultSkillDirs()...)`.
 
@@ -327,7 +327,6 @@ func main() {
     provider := skills.Chain(
         skills.FromDir("./.agents/skills"),          // project-level (highest priority)
         skills.FromDir(skills.DefaultSkillDirs()...), // user-level (~/.agents/skills)
-        skills.Builtin(),                             // framework built-ins (lowest priority)
     )
 
     summaries, _ := provider.Discover(context.Background())
@@ -347,3 +346,129 @@ func main() {
 
 - Use `skills.FromDir("./.agents/skills")` and `skills.FromDir(os.ExpandEnv("$HOME/.agents/skills"))` as separate providers if you want explicit control.
 - Add a database-backed `SkillProvider` implementation to pull skills from a remote store — implement `Discover` and `Activate` against your API, pass it to `Chain`.
+
+---
+
+## Recipe 7: Ship companion files with a skill
+
+**Goal:** Write a skill with detailed reference material in companion files, letting the agent fetch detail on demand.
+
+Skill file at `./skills/api-client/SKILL.md`:
+
+```markdown
+---
+name: api-client
+description: Call REST APIs using curl or your language's HTTP library.
+tags: [http, api, rest]
+---
+
+You are an expert at making REST API calls and parsing responses.
+
+## Quick steps
+
+1. Ask for the API endpoint and method (GET, POST, etc.).
+2. Ask for any required headers or authentication.
+3. Construct the request and execute it.
+4. Parse and summarize the response.
+
+For detailed endpoint reference, see {dir}/references/endpoints.md
+For error code reference, see {dir}/references/errors.md
+```
+
+Companion files at `./skills/api-client/references/`:
+
+```
+references/
+  endpoints.md        ← full list of available endpoints
+  errors.md           ← error codes and recovery steps
+  auth-flows.md       ← authentication strategy guide
+```
+
+**How the agent uses it:**
+
+- The agent activates `api-client` and reads the brief SKILL.md instructions.
+- During task execution, if the agent needs to know the full list of endpoints, it calls `skill_read("api-client", "references/endpoints.md")`.
+- Similarly for error codes or auth flows — all fetched on demand without loading everything upfront.
+
+**Plain-English walkthrough:**
+
+- Companion files are bundled in the skill directory alongside `SKILL.md`.
+- The agent can call `skill_list_resources("api-client")` to discover available companion files (returns `["references/endpoints.md", "references/errors.md", "references/auth-flows.md"]`).
+- The agent calls `skill_read` only for the files it actually needs during the task.
+- Token cost is paid only for fetched files, not for all companions upfront.
+
+---
+
+## Recipe 8: Enable eager discovery with skill catalog and custom search
+
+**Goal:** Inject the skill catalog into the system prompt and plug in a custom searcher for vector ranking.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/nevindra/oasis"
+    "github.com/nevindra/oasis/provider/openaicompat"
+    "github.com/nevindra/oasis/skills"
+)
+
+// MyVectorSearcher implements skills.SkillSearcher.
+// It could use embeddings, semantic search, or any ranking logic.
+type MyVectorSearcher struct {
+    // ... your index / model / state
+}
+
+func (s *MyVectorSearcher) SearchSkills(ctx context.Context, query string, limit int) ([]skills.SkillSearchResult, error) {
+    // Your implementation: embed query, find nearest neighbors, rank, return.
+    // For now, a stub that returns all skills with fake scores.
+    summaries, _ := s.provider.Discover(ctx) // assume you stored provider
+    results := make([]skills.SkillSearchResult, 0, len(summaries))
+    for _, summary := range summaries {
+        results = append(results, skills.SkillSearchResult{
+            SkillSummary: summary,
+            Score:        0.9, // your ranking logic here
+        })
+    }
+    return results[:min(limit, len(results))], nil
+}
+
+func main() {
+    // Wrap your provider with vector search on type assertion.
+    fileProvider := skills.FromDir("./skills")
+    
+    // If you implement SkillSearcher, the agent will use it automatically.
+    // (In production, you'd compose this into the provider chain.)
+    
+    llm := openaicompat.New("https://api.openai.com/v1", "gpt-4o", "YOUR_KEY")
+    
+    ag := oasis.NewAgent(llm,
+        oasis.WithSkills(fileProvider),
+        oasis.WithSkillCatalog(),  // inject catalog into every request
+    )
+    
+    result, err := ag.Execute(context.Background(), oasis.AgentTask{
+        Input: "Help me set up a PDF invoice generator.",
+    })
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(result.Output)
+}
+```
+
+**Plain-English walkthrough:**
+
+- `WithSkillCatalog()` adds the list of all available skills to the system prompt on every request — the LLM can browse without a tool call.
+- The `skill_search` tool is always registered. If the agent wants to search by query, it calls the tool. The framework checks if your provider implements `SkillSearcher`:
+  - If yes: your searcher's `SearchSkills` is called.
+  - If no: the built-in BM25 searcher is used.
+- You implement custom search (vector, semantic, hybrid) by wrapping or augmenting your provider and implementing `SkillSearcher`. No framework changes required.
+
+**Variations:**
+
+- Skip `WithSkillCatalog` if your skill count is large — inject only on demand via `skill_search`.
+- Combine eager catalog with lazy search: catalog gives visibility; `skill_search` lets the agent refine via query.
+- For very large corpora: implement a `SkillSearcher` backed by a persistent vector index (Qdrant, Weaviate, etc.) — the agent queries your index transparently via the `skill_search` tool.

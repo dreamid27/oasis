@@ -57,3 +57,36 @@ type Skill struct {
 	License       string            `json:"license,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
 }
+
+// SkillResources is an optional capability a SkillProvider MAY implement to
+// expose companion files (references, scripts, assets) stored alongside a
+// skill's SKILL.md. When a provider satisfies it, NewSkillTools registers the
+// skill_read and skill_list_resources tools; otherwise those tools are omitted.
+//
+// Check via type assertion: if r, ok := provider.(SkillResources); ok { ... }
+type SkillResources interface {
+	// ListResources returns the slash-separated, skill-root-relative paths of a
+	// skill's companion files, excluding SKILL.md. Returns an error if the skill
+	// does not exist; an empty slice with nil error when it has no companion files.
+	ListResources(ctx context.Context, name string) ([]string, error)
+
+	// ReadResource returns the content of a companion file at a skill-root-relative
+	// path. The path is confined to the skill directory: absolute paths and any
+	// ".." escape are rejected. Returns an error if the skill or file is missing.
+	ReadResource(ctx context.Context, name, relPath string) ([]byte, error)
+}
+
+// SkillSearcher is an optional capability for ranked skill discovery by free-text
+// query. Providers MAY implement it (e.g. backed by a vector store). When a
+// provider does not, callers wrap it with the built-in BM25 searcher
+// (NewBM25Searcher). NewSkillTools always registers skill_search, preferring a
+// provider's own SkillSearcher and falling back to BM25.
+type SkillSearcher interface {
+	SearchSkills(ctx context.Context, query string, limit int) ([]SkillSearchResult, error)
+}
+
+// SkillSearchResult is a skill summary with its relevance score (higher is better).
+type SkillSearchResult struct {
+	SkillSummary
+	Score float64 `json:"score"`
+}

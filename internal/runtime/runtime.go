@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -220,6 +221,39 @@ func (c *Runtime) CacheBuiltinToolDefs(defs []core.ToolDefinition, inputHandlerD
 	return defs
 }
 
+// buildSkillCatalog formats the provider's discoverable skills into an
+// "# Available Skills" prompt block, excluding any skill already injected via
+// ActiveSkills. Returns "" on discover error, empty corpus, or all-excluded.
+func buildSkillCatalog(ctx context.Context, p skills.SkillProvider, active []skills.Skill) string {
+	summaries, err := p.Discover(ctx)
+	if err != nil || len(summaries) == 0 {
+		return ""
+	}
+	activeNames := make(map[string]bool, len(active))
+	for _, s := range active {
+		activeNames[s.Name] = true
+	}
+	var b strings.Builder
+	b.WriteString("# Available Skills\n\n")
+	b.WriteString("You can load any of these skills for detailed instructions. Use skill_activate(name) (or skill_search to find one by topic) before applying a skill.\n\n")
+	n := 0
+	for _, s := range summaries {
+		if activeNames[s.Name] {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s — %s", s.Name, s.Description)
+		if len(s.Tags) > 0 {
+			fmt.Fprintf(&b, " [%s]", strings.Join(s.Tags, ", "))
+		}
+		b.WriteByte('\n')
+		n++
+	}
+	if n == 0 {
+		return ""
+	}
+	return b.String()
+}
+
 // ResolvePromptAndProvider returns the effective prompt and provider for this request.
 func (c *Runtime) ResolvePromptAndProvider(ctx context.Context, task core.AgentTask) (string, core.Provider) {
 	return c.ResolvePromptAndProviderWith(ctx, task, &c.Config)
@@ -238,6 +272,11 @@ func (c *Runtime) ResolvePromptAndProviderWith(ctx context.Context, task core.Ag
 	}
 	if c.activeSkillInstructions != "" {
 		prompt = prompt + "\n\n# Active Skills\n\n" + c.activeSkillInstructions
+	}
+	if cfg.SkillCatalog && cfg.SkillProvider != nil {
+		if block := buildSkillCatalog(ctx, cfg.SkillProvider, cfg.ActiveSkills); block != "" {
+			prompt = prompt + "\n\n" + block
+		}
 	}
 	return prompt, p
 }

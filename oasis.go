@@ -132,6 +132,7 @@ var WithInputHandler = agent.WithInputHandler
 var WithMiddleware = agent.WithMiddleware
 var WithSkills = agent.WithSkills
 var WithActiveSkills = agent.WithActiveSkills
+var WithSkillCatalog = agent.WithSkillCatalog
 var WithEmbedding = agent.WithEmbedding
 var RetryMiddleware = agent.RetryMiddleware
 var WithOverrides = agent.WithOverrides

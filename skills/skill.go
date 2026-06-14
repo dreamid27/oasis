@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +15,9 @@ import (
 // Compile-time interface checks.
 var _ SkillProvider = (*fileSkillProvider)(nil)
 var _ SkillWriter = (*fileSkillProvider)(nil)
+var _ SkillResources = (*fileSkillProvider)(nil)
 var _ SkillProvider = (*chainedSkillProvider)(nil)
+var _ SkillResources = (*chainedSkillProvider)(nil)
 
 // chainedSkillProvider merges multiple SkillProviders. Discover returns the
 // union (first provider wins on name collisions). Activate searches in order.
@@ -26,8 +29,8 @@ type chainedSkillProvider struct {
 // earliest provider winning on name collisions.
 //
 //	provider := skills.Chain(
-//	    skills.FromDir("./skills"),
-//	    skills.Builtin(),
+//	    skills.FromDir("./project-skills"),
+//	    skills.FromDir(skills.DefaultSkillDirs()...),
 //	)
 func Chain(providers ...SkillProvider) SkillProvider {
 	return &chainedSkillProvider{providers: providers}
@@ -61,6 +64,36 @@ func (c *chainedSkillProvider) Activate(ctx context.Context, name string) (Skill
 		}
 	}
 	return Skill{}, fmt.Errorf("skill %q not found", name)
+}
+
+// ListResources routes to the first sub-provider that implements SkillResources
+// and has the named skill, mirroring Activate's search order.
+func (c *chainedSkillProvider) ListResources(ctx context.Context, name string) ([]string, error) {
+	for _, p := range c.providers {
+		r, ok := p.(SkillResources)
+		if !ok {
+			continue
+		}
+		if files, err := r.ListResources(ctx, name); err == nil {
+			return files, nil
+		}
+	}
+	return nil, fmt.Errorf("skill %q not found", name)
+}
+
+// ReadResource routes to the first sub-provider that implements SkillResources
+// and can read the requested file.
+func (c *chainedSkillProvider) ReadResource(ctx context.Context, name, relPath string) ([]byte, error) {
+	for _, p := range c.providers {
+		r, ok := p.(SkillResources)
+		if !ok {
+			continue
+		}
+		if data, err := r.ReadResource(ctx, name, relPath); err == nil {
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("skill %q resource %q not found", name, relPath)
 }
 
 // ActivateWithReferences activates a skill and prepends instructions from
@@ -420,6 +453,85 @@ func (p *fileSkillProvider) DeleteSkill(ctx context.Context, name string) error 
 	}
 
 	return fmt.Errorf("DeleteSkill: skill %q not found", name)
+}
+
+// skillDir returns the first configured directory that contains the named
+// skill (a SKILL.md under <dir>/<name>), matching Activate's search order.
+func (p *fileSkillProvider) skillDir(name string) (string, error) {
+	for _, dir := range p.dirs {
+		d := filepath.Join(dir, name)
+		if _, err := os.Stat(filepath.Join(d, "SKILL.md")); err == nil {
+			return d, nil
+		}
+	}
+	return "", fmt.Errorf("skill %q not found", name)
+}
+
+// ListResources walks the skill directory and returns companion file paths
+// (relative, slash-separated), excluding SKILL.md.
+func (p *fileSkillProvider) ListResources(ctx context.Context, name string) ([]string, error) {
+	root, err := p.skillDir(name)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "SKILL.md" {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("ListResources %q: %w", name, walkErr)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// ReadResource reads a companion file, confining access to the skill directory.
+func (p *fileSkillProvider) ReadResource(ctx context.Context, name, relPath string) ([]byte, error) {
+	root, err := p.skillDir(name)
+	if err != nil {
+		return nil, err
+	}
+	clean := filepath.Clean(relPath)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("ReadResource: path %q escapes skill directory", relPath)
+	}
+	full := filepath.Join(root, clean)
+	if rel, rerr := filepath.Rel(root, full); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("ReadResource: path %q escapes skill directory", relPath)
+	}
+	// Defense in depth: resolve symlinks and re-verify the real target stays
+	// under the skill directory, so a symlink inside the skill cannot leak files
+	// outside it. The lexical check above only guards "..".
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("ReadResource %q: %w", name, err)
+	}
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return nil, fmt.Errorf("ReadResource %q/%q: %w", name, relPath, err)
+	}
+	if rel, rerr := filepath.Rel(realRoot, realFull); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("ReadResource: path %q escapes skill directory", relPath)
+	}
+	data, err := os.ReadFile(realFull)
+	if err != nil {
+		return nil, fmt.Errorf("ReadResource %q/%q: %w", name, relPath, err)
+	}
+	return data, nil
 }
 
 // renderSkillMD serialises a Skill to SKILL.md format: YAML frontmatter

@@ -2,7 +2,7 @@
 
 Import path: `github.com/nevindra/oasis/skills`
 
-The root `oasis` package re-exports `Skill`, `WithSkills`, and `WithActiveSkills` for convenience.
+The root `oasis` package re-exports `Skill`, `WithSkills`, `WithActiveSkills`, and `WithSkillCatalog` for convenience.
 
 ---
 
@@ -62,6 +62,43 @@ type SkillProvider interface {
 
 ---
 
+### `skill_search` (tool)
+
+Searches available skills by free-text query, returning ranked matches. Always registered by `NewSkillTools`.
+
+**Inputs:**
+- `query` (string, required) — search phrase (e.g., "PDF generation", "data analysis")
+- `limit` (int, optional, default 5) — maximum number of results to return
+
+**Output:** Array of skill summaries with relevance scores, sorted by score descending.
+
+Uses the provider's `SkillSearcher` if it implements one (e.g., vector/hybrid search); otherwise falls back to the built-in BM25 searcher.
+
+---
+
+### `skill_read` (tool)
+
+Reads a companion file bundled with a skill (e.g., `references/api.md`, `scripts/setup.sh`). Registered only when the provider implements `SkillResources`.
+
+**Inputs:**
+- `name` (string, required) — skill name
+- `path` (string, required) — skill-relative path (e.g., `references/guide.md`)
+
+**Output:** File contents as a string. Capped at 64 KB; larger files are truncated with a truncation notice.
+
+---
+
+### `skill_list_resources` (tool)
+
+Lists companion files (references, scripts, assets) bundled with a skill. Registered only when the provider implements `SkillResources`.
+
+**Inputs:**
+- `name` (string, required) — skill name
+
+**Output:** Array of relative file paths. The `SKILL.md` file itself is excluded.
+
+---
+
 ### `SkillWriter` (interface)
 
 Optional capability. File-based providers implement this; built-in (embedded) providers do not. Check via type assertion:
@@ -100,22 +137,14 @@ provider := skills.FromDir("./skills", "./team-skills")
 
 `FromDir` with no arguments is valid — it creates an empty provider that never finds anything. Useful as a placeholder in tests.
 
-### `Builtin() SkillProvider`
-
-Returns a read-only `SkillProvider` backed by skills compiled into the framework binary. Does not implement `SkillWriter`. Ships with `oasis-pdf`, `oasis-docx`, `oasis-xlsx`, `oasis-pptx`, `oasis-design-system`.
-
-```go
-provider := skills.Builtin()
-```
-
 ### `Chain(providers ...SkillProvider) SkillProvider`
 
-Merges multiple providers. `Discover` returns the union, sorted by name, with the first provider winning on name collisions. `Activate` searches in order and returns the first match.
+Merges multiple providers. `Discover` returns the union, sorted by name, with the first provider winning on name collisions. `Activate` searches in order and returns the first match. Skill content is supplied by the application — the framework ships no bundled skills.
 
 ```go
 provider := skills.Chain(
-    skills.FromDir("./skills"),
-    skills.Builtin(),
+    skills.FromDir("./project-skills"),    // project-level (wins on collision)
+    skills.FromDir(skills.DefaultSkillDirs()...), // then user-level
 )
 ```
 
@@ -169,8 +198,70 @@ The combined instructions format is:
 
 Returns the set of skill-management tools backed by the given provider. Called automatically by the framework when you use `WithSkills` — you do not normally call this directly.
 
-- Always returns `skill_discover` and `skill_activate`.
+- Always returns `skill_discover`, `skill_activate`, and `skill_search`.
 - Also returns `skill_create` and `skill_update` if `provider` implements `SkillWriter`.
+- Also returns `skill_read` and `skill_list_resources` if `provider` implements `SkillResources`.
+
+---
+
+### `SkillResources` (interface)
+
+Optional capability for reading companion files bundled with a skill. The `FromDir` provider implements it (reading from the skill folder); `Chain` forwards to whichever member provider owns the skill. Check via type assertion:
+
+```go
+if sr, ok := provider.(skills.SkillResources); ok {
+    paths, _ := sr.ListResources(ctx, "skill-name")
+}
+```
+
+```go
+type SkillResources interface {
+    ListResources(ctx context.Context, name string) ([]string, error)
+    ReadResource(ctx context.Context, name, relPath string) ([]byte, error)
+}
+```
+
+**`ListResources`** returns the relative paths of companion files bundled with a skill (e.g., `references/api.md`, `scripts/setup.sh`). The `SKILL.md` file itself is excluded from the list. Returns an empty slice when no companions exist.
+
+**`ReadResource`** reads a companion file by name and relative path. The path is confined to the skill directory — absolute paths and `..` are rejected. Output is capped at 64 KB; truncation is noted in the returned bytes. Binary files are accepted; callers must handle raw bytes appropriately.
+
+---
+
+### `SkillSearchResult`
+
+A scored search result returned by `SkillSearcher.SearchSkills`.
+
+```go
+type SkillSearchResult struct {
+    SkillSummary         // embedded: Name, Description, Tags, Compatibility
+    Score        float64 // higher is better
+}
+```
+
+---
+
+### `SkillSearcher` (interface)
+
+Optional capability. Implement this to plug in custom search (e.g., vector/hybrid search). When a provider does not implement it, `NewSkillTools` registers the built-in BM25 searcher.
+
+```go
+type SkillSearcher interface {
+    SearchSkills(ctx context.Context, query string, limit int) ([]SkillSearchResult, error)
+}
+```
+
+**`SearchSkills`** returns up to `limit` skills matching the free-text query, ranked by relevance (highest score first). The `limit` parameter is a guideline; implementations may return fewer results if fewer matches exist.
+
+---
+
+### `NewBM25Searcher(p SkillProvider) SkillSearcher`
+
+Returns a `SkillSearcher` using Okapi BM25 scoring over each skill's name, description, tags, and instructions. The searcher reads the provider on every query — no caching — so results are always fresh. For large skill corpora, consider implementing `SkillSearcher` yourself with a persistent index or vector embeddings.
+
+```go
+searcher := skills.NewBM25Searcher(provider)
+results, err := searcher.SearchSkills(ctx, "invoice pdf", 5)
+```
 
 ---
 
@@ -194,6 +285,19 @@ ag := oasis.NewAgent(llm, oasis.WithActiveSkills(skill))
 ```
 
 `WithActiveSkills` and `WithSkills` can be combined: some skills are always active, others are discoverable on demand.
+
+### `WithSkillCatalog() AgentOption`
+
+Injects a catalog of available skill summaries (name, description, tags) into the system prompt on every request. The LLM can browse the catalog before its first tool call to choose a skill proactively, enabling eager skill discovery.
+
+```go
+ag := oasis.NewAgent(llm,
+    oasis.WithSkills(provider),
+    oasis.WithSkillCatalog(),
+)
+```
+
+The catalog is recomputed fresh on each request and excludes skills already injected via `WithActiveSkills`. This is a no-op if no provider is configured via `WithSkills`. Use `skill_search` or `skill_discover` tools for lazy, on-demand discovery — `WithSkillCatalog` is complementary, trading token cost for eager visibility.
 
 ---
 
@@ -261,4 +365,4 @@ Load the invoice template from {dir}/templates/invoice.html.
 
 ## Thread safety
 
-All exported types (`fileSkillProvider`, `builtinSkillProvider`, `chainedSkillProvider`) are safe for concurrent use. `Discover` rescans the filesystem on every call with no shared mutable state. `CreateSkill` / `UpdateSkill` / `DeleteSkill` do not hold locks across file operations — concurrent writes to the same skill name are not protected; callers should serialize writes if needed.
+All exported types (`fileSkillProvider`, `chainedSkillProvider`) are safe for concurrent use. `Discover` rescans the filesystem on every call with no shared mutable state. `CreateSkill` / `UpdateSkill` / `DeleteSkill` do not hold locks across file operations — concurrent writes to the same skill name are not protected; callers should serialize writes if needed.

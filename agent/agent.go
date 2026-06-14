@@ -55,11 +55,6 @@ type RunOption = core.RunOption
 // RunOptions overrides agent-level defaults for a single Execute call.
 type RunOptions = runtime.RunOptions
 
-// The dispatch and loop-config aliases below are runtime-integration exports
-// shared with the network subpackage; they are excluded from the v1.x
-// compatibility promise (may change or move to internal). See the package
-// overview's "API stability" section.
-
 // DispatchResult holds the result of a single tool or agent dispatch.
 type DispatchResult = runtime.DispatchResult
 
@@ -290,6 +285,15 @@ func WithActiveSkills(ss ...skills.Skill) AgentOption {
 // WithSkills registers a SkillProvider and automatically adds skill tools.
 func WithSkills(p skills.SkillProvider) AgentOption {
 	return func(c *Config) { c.SkillProvider = p }
+}
+
+// WithSkillCatalog injects the catalog of available skills (name, description,
+// tags) into the system prompt on every request, so the model can choose a skill
+// before its first tool call. Requires a provider configured via WithSkills.
+// The catalog is recomputed per request and excludes skills already injected via
+// WithActiveSkills. No-op if no provider is configured.
+func WithSkillCatalog() AgentOption {
+	return func(c *Config) { c.SkillCatalog = true }
 }
 
 // WithResponseSchema sets the response schema for structured JSON output.
