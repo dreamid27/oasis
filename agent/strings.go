@@ -1,7 +1,9 @@
 package agent
 
 // TruncateStr truncates a string to n runes.
-// Exported for network subpackage access.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 func TruncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s

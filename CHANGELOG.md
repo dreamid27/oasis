@@ -123,6 +123,21 @@ below are one-time corrections made deliberately before the freeze.
   split into more chunks than a rune-exact pack (each still ≤ `MaxToolResultLen`
   runes, same call ID, identical reassembly); ASCII chunking is unchanged.
 
+### Stability
+
+- **Runtime-integration exports excluded from the v1.x compatibility promise.**
+  A small set of `agent` exports exists only so the sibling `network`
+  subpackage can share the agent's execution engine (which is not relocated to
+  an internal package in this release to avoid a high-risk move at the freeze
+  point). These are documented as runtime-integration surface and are **not**
+  covered by semantic-versioning compatibility — they may change or move to an
+  internal package in a future minor release without a major bump: `RunLoop`,
+  `LoopConfig`, `NewStandardDispatch`, `StandardDispatchConfig`, `AgentRouter`,
+  `DispatchTool`, `DispatchResult`, `DispatchFunc`, `ToolExecFunc`,
+  `ToolExecStreamFunc`, `ExecutePlan`, `ExecuteAskUser`, `ExecuteAgent`,
+  `TruncateStr`. Build on the documented `LLMAgent` / `Network` /
+  functional-option API instead.
+
 ## [0.20.0] - 2026-06-12
 
 ### Changed

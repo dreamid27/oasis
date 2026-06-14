@@ -36,6 +36,9 @@ const maxAccumulatedAttachmentBytes int64 = 50 * 1024 * 1024 // 50 MB
 // RunLoop is the exported alias for runLoop, used by the network package
 // (which cannot call unexported functions) as the runLoopFn callback to
 // Runtime.ExecuteWithSpan.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 var RunLoop = runLoop
 
 // runLoop is the shared tool-calling orchestrator used by both LLMAgent and

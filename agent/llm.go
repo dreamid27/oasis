@@ -219,6 +219,9 @@ const defaultMaxParallelDispatch = 10
 
 // ExecutePlan is the exported alias for executePlan.
 // Network uses it as a callback to DispatchBuiltins.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 var ExecutePlan = executePlan
 
 // executePlan handles the execute_plan tool call by parsing steps,
@@ -314,6 +317,9 @@ type askUserArgs struct {
 // ExecuteAskUser handles the ask_user special-case tool call.
 // Exported so the network package can use it as a callback to DispatchBuiltins
 // without importing agent's internal types directly.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 var ExecuteAskUser = executeAskUser
 
 // executeAskUser handles the ask_user special-case tool call.
@@ -341,6 +347,9 @@ func executeAskUser(ctx context.Context, handler InputHandler, agentName string,
 // ExecuteAgent runs a and returns the result. When ch is non-nil, child events
 // flow through the parent channel with envelope-event filtering via WithStream.
 // Panic recovery is included on both paths. logger may be nil.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 func ExecuteAgent(ctx context.Context, a core.Agent, agentName string, task core.AgentTask, ch chan<- core.StreamEvent, logger *slog.Logger) (result core.AgentResult, err error) {
 	if logger == nil {
 		logger = nopLogger

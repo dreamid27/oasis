@@ -30,7 +30,9 @@ func toolResultToDispatch(result core.ToolResult, err error) DispatchResult {
 // to a DispatchResult. When executeToolStream is non-nil and ch is non-nil,
 // it uses the streaming executor instead.
 // Shared by LLMAgent and Network for the common tool path.
-// Exported for network subpackage access.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 func DispatchTool(ctx context.Context, executeTool ToolExecFunc, executeToolStream ToolExecStreamFunc, name string, args json.RawMessage, ch chan<- core.StreamEvent) DispatchResult {
 	if ch != nil && executeToolStream != nil {
 		return toolResultToDispatch(executeToolStream(ctx, name, args, ch))
@@ -41,9 +43,15 @@ func DispatchTool(ctx context.Context, executeTool ToolExecFunc, executeToolStre
 // AgentRouter is an optional hook between built-ins and standard tool dispatch.
 // Returning (result, true) short-circuits dispatch with that result.
 // Returning (_, false) falls through to regular tool dispatch.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 type AgentRouter func(ctx context.Context, tc core.ToolCall) (DispatchResult, bool)
 
 // StandardDispatchConfig is the configuration for NewStandardDispatch.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 type StandardDispatchConfig struct {
 	Builtins          func(ctx context.Context, tc core.ToolCall, dispatch DispatchFunc) (DispatchResult, bool)
 	AgentRouter       AgentRouter
@@ -66,6 +74,9 @@ type StandardDispatchConfig struct {
 
 // NewStandardDispatch builds the recursive DispatchFunc.
 // Order: Builtins → AgentRouter → (policy/streaming) → DispatchTool.
+//
+// Stability: runtime-integration export shared with the network subpackage;
+// excluded from the v1.x compatibility promise (may change or move to internal).
 func NewStandardDispatch(cfg StandardDispatchConfig) DispatchFunc {
 	// streamPolicyWarned tracks tool names for which a policy was registered
 	// but the tool resolved as streaming; we log a warning once per name.

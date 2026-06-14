@@ -1,4 +1,7 @@
-// Package agent — typed suspend/resume contracts.
+// Package agent — LLMAgent, the shared run loop, and typed suspend/resume
+// contracts.
+//
+// # Suspend/resume
 //
 // SuspendProtocol[Req, Resp] is a typed handle that pins the payload type
 // (Req) sent to the human and the response type (Resp) sent back, declared
@@ -9,6 +12,24 @@
 //
 // See docs/superpowers/specs/2026-05-22-typed-hitl-contracts-design.md
 // for the full design.
+//
+// # API stability
+//
+// Most of this package is covered by the v1.x semantic-versioning
+// compatibility promise. A small set of exports exists only so the sibling
+// network subpackage can share the agent's execution engine without that
+// engine living in a public location. These runtime-integration exports are
+// NOT part of the stable public API and are excluded from the compatibility
+// promise — they may change or move to an internal package in a future minor
+// release without a major bump:
+//
+//   - RunLoop, LoopConfig
+//   - NewStandardDispatch, StandardDispatchConfig, AgentRouter, DispatchTool
+//   - DispatchResult, DispatchFunc, ToolExecFunc, ToolExecStreamFunc
+//   - ExecutePlan, ExecuteAskUser, ExecuteAgent
+//   - TruncateStr
+//
+// Build on the documented LLMAgent / Network / functional-option API instead.
 
 package agent
 
