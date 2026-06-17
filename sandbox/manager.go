@@ -29,6 +29,13 @@ type Manager interface {
 
 	// Close force-destroys all managed sandboxes and their networks.
 	Close() error
+
+	// Health returns a passive snapshot of runtime readiness and pool state.
+	// It MUST NOT launch or mutate sandboxes, and MUST NOT return an error for
+	// a known-bad condition (missing file, KVM absent) — those are reported via
+	// the *OK fields. It returns an error only if the snapshot itself cannot be
+	// taken (e.g. ctx cancelled).
+	Health(ctx context.Context) (Health, error)
 }
 
 // CreateOpts configures a new sandbox.
@@ -51,4 +58,47 @@ type ResourceSpec struct {
 	CPU    int   // number of CPU cores; 0 uses default (1)
 	Memory int64 // bytes; 0 uses default (2GB)
 	Disk   int64 // bytes; 0 uses default (10GB)
+}
+
+// Health is a passive snapshot of sandbox-runtime readiness and pool state.
+type Health struct {
+	Ready    bool         `json:"ready"`    // runtime usable end-to-end (all Runtime *OK fields true)
+	Runtime  RuntimeInfo  `json:"runtime"`  // "installed correctly"
+	Pool     PoolStats    `json:"pool"`     // "connected / warm"
+	Egress   EgressInfo   `json:"egress"`   // default egress policy in effect
+	Snapshot SnapshotInfo `json:"snapshot"` // golden-snapshot configuration & readiness
+}
+
+// RuntimeInfo reports whether the host pieces needed to launch a VM are present.
+type RuntimeInfo struct {
+	Backend       string `json:"backend"`        // e.g. "firecracker"
+	KernelPath    string `json:"kernel_path"`
+	KernelOK      bool   `json:"kernel_ok"`      // kernel file exists & is readable
+	RootfsImage   string `json:"rootfs_image"`
+	RootfsOK      bool   `json:"rootfs_ok"`      // rootfs file exists & is readable
+	FCBinary      string `json:"fc_binary"`      // resolved firecracker binary path
+	FCBinaryOK    bool   `json:"fc_binary_ok"`   // binary exists & is executable
+	KVMAccessible bool   `json:"kvm_accessible"` // /dev/kvm present & openable
+}
+
+// PoolStats reports pre-warmed pool occupancy and lifetime fault counters.
+type PoolStats struct {
+	Configured int `json:"configured"` // target pool size
+	Ready      int `json:"ready"`      // warm/idle VMs ready to claim
+	Active     int `json:"active"`     // sandboxes currently in use
+	Failed     int `json:"failed"`     // cumulative circuit-breaker trips
+	Restarts   int `json:"restarts"`   // cumulative monitor-driven restarts
+}
+
+// EgressInfo reports the default egress policy applied to new sandboxes.
+type EgressInfo struct {
+	Enabled   bool   `json:"enabled"`
+	Mode      string `json:"mode"`       // "allow" | "deny" | ""
+	RuleCount int    `json:"rule_count"`
+}
+
+// SnapshotInfo reports golden-snapshot configuration and readiness.
+type SnapshotInfo struct {
+	Enabled bool `json:"enabled"` // UseSnapshot configured
+	Ready   bool `json:"ready"`   // golden snapshot built/loaded
 }
