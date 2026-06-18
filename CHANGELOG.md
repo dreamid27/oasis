@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-18
+
 ### Added
 
 - **`guardrail.CostGuard`** — per-run, per-model spend ceiling (deterministic; no observability storage). Prices cumulative token usage against an injected pricing table (`WithPricing`). Halts (`*core.ErrHalt`) or warns (`WarnOnly`) when the budget is exceeded. Unknown models cost 0 (fail open); no pricing configured = inactive + warns once.
@@ -1692,7 +1694,9 @@ DX ergonomics patch addressing friction from real-world migration feedback.
 - `renderers/` directory — PDF, DOCX, XLSX, PPTX renderer scripts removed.
 - `requirements.txt` — Python deps for renderers (library deps remain in Dockerfile for direct agent use).
 
-[1.0.0]: https://github.com/nevindra/oasis/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/nevindra/oasis/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/nevindra/oasis/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/nevindra/oasis/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/nevindra/oasis/compare/v0.17.4...v0.19.0
 [0.17.4]: https://github.com/nevindra/oasis/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/nevindra/oasis/compare/v0.17.2...v0.17.3
