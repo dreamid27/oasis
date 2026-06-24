@@ -24,18 +24,40 @@ var dashscopeImageModels = []string{
 	"wan2.7-image",
 }
 
-// dashscopeLister returns the curated DashScope image model list. It performs
-// no network call (DashScope exposes no model-listing endpoint for image models).
+// dashscopeVideoModels is the static set of DashScope Wan video-synthesis
+// models (text-to-video, image-to-video, video-edit). DashScope has no
+// OpenAI-style /models listing for these, so the catalog relies on this
+// curated list for validation and selection.
+var dashscopeVideoModels = []string{
+	"wan2.7-t2v",
+	"wan2.7-i2v",
+	"wan2.7-videoedit",
+}
+
+// dashscopeLister returns the curated DashScope image and video model lists.
+// It performs no network call (DashScope exposes no model-listing endpoint
+// for these generation models).
 type dashscopeLister struct{}
 
 func (l *dashscopeLister) listModels(ctx context.Context, baseURL, apiKey string) ([]oasis.ModelInfo, error) {
-	out := make([]oasis.ModelInfo, 0, len(dashscopeImageModels))
+	out := make([]oasis.ModelInfo, 0, len(dashscopeImageModels)+len(dashscopeVideoModels))
 	for _, id := range dashscopeImageModels {
 		out = append(out, oasis.ModelInfo{
 			ID:               id,
 			Provider:         "dashscope",
 			DisplayName:      id,
 			OutputModalities: []string{"image"},
+			Status:           oasis.ModelStatusAvailable,
+		})
+	}
+	// Why: video models are distinct from image models in output modality and
+	// routing, but share the same no-listing-endpoint constraint.
+	for _, id := range dashscopeVideoModels {
+		out = append(out, oasis.ModelInfo{
+			ID:               id,
+			Provider:         "dashscope",
+			DisplayName:      id,
+			OutputModalities: []string{"video"},
 			Status:           oasis.ModelStatusAvailable,
 		})
 	}

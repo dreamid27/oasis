@@ -18,3 +18,12 @@ func WithHTTPClient(c *http.Client) Option {
 func WithName(name string) Option {
 	return func(p *Provider) { p.name = name }
 }
+
+// WithDownloadVideo makes video models return the generated video as inline
+// bytes (Attachment.Data) instead of a URL reference. By default video results
+// are returned as a URL only, since DashScope video URLs are large and valid
+// for a limited time — callers who need to persist the bytes opt in here.
+// Downloaded media is capped at 512 MiB; larger responses are rejected with an error.
+func WithDownloadVideo() Option {
+	return func(p *Provider) { p.downloadVideo = true }
+}

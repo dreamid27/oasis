@@ -1,7 +1,9 @@
 // Package dashscope provides an oasis Provider for Alibaba DashScope's native
-// multimodal-generation API — specifically Qwen-Image text-to-image generation.
+// multimodal-generation API — supporting Qwen-Image text-to-image generation,
+// Wan image generation (text-to-image via interleaved mode), and Wan video
+// generation (text-to-video, image-to-video, and video editing).
 //
-// DashScope's image models are NOT served over the OpenAI-compatible
+// DashScope's image and video models are NOT served over the OpenAI-compatible
 // chat/completions endpoint; they use a bespoke request/response shape:
 //
 //	POST {baseURL}/services/aigc/multimodal-generation/generation
@@ -16,6 +18,7 @@ package dashscope
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,16 +29,20 @@ import (
 	oasis "github.com/nevindra/oasis/core"
 )
 
-// Provider implements oasis.Provider for DashScope image generation.
+// Provider implements oasis.Provider for DashScope image and video generation.
 type Provider struct {
 	apiKey  string
 	model   string
 	baseURL string
 	client  *http.Client
 	name    string
+
+	// downloadVideo, when set, downloads the generated video bytes inline
+	// instead of returning a URL reference (see WithDownloadVideo).
+	downloadVideo bool
 }
 
-// New creates a DashScope image provider. baseURL is the API base, e.g.
+// New creates a DashScope image/video provider. baseURL is the API base, e.g.
 // "https://dashscope-intl.aliyuncs.com/api/v1" (Singapore) or
 // "https://dashscope.aliyuncs.com/api/v1" (Beijing).
 //
@@ -108,15 +115,17 @@ type genResponse struct {
 	RequestID string `json:"request_id"`
 }
 
-// ChatStream generates images for the prompt carried in req.Messages and
-// returns them as Attachments. The channel (if non-nil) is closed before
+// ChatStream generates images or a video for the prompt carried in req.Messages
+// and returns them as Attachments. The channel (if non-nil) is closed before
 // returning; no incremental events are emitted.
 //
-// Two DashScope request styles are dispatched by model family:
-//   - Qwen-Image (and similar single-shot models): plain synchronous request.
+// Three DashScope request styles are dispatched by model family:
+//   - Wan video models (t2v/i2v/videoedit): asynchronous video-synthesis task
+//     (create → poll), returning a single video URL (or inline bytes).
 //   - Wan image models: text-to-image only works via interleaved mode
-//     (enable_interleave=true), which on the sync endpoint requires SSE
-//     streaming — so those are streamed and every image part is collected.
+//     (enable_interleave=true), so those use the asynchronous image-generation
+//     task (create → poll) and every image part is collected.
+//   - Qwen-Image (and similar single-shot models): plain synchronous request.
 func (p *Provider) ChatStream(ctx context.Context, req oasis.ChatRequest, ch chan<- oasis.StreamEvent) (oasis.ChatResponse, error) {
 	if ch != nil {
 		defer close(ch)
@@ -131,9 +140,14 @@ func (p *Provider) ChatStream(ctx context.Context, req oasis.ChatRequest, ch cha
 		attachments []oasis.Attachment
 		err         error
 	)
-	if isWanModel(p.model) {
+	// Why: video model ids also start with "wan", so isVideoModel must be
+	// checked before isWanModel — order matters.
+	switch {
+	case isVideoModel(p.model):
+		attachments, err = p.generateVideo(ctx, prompt, lastUserAttachments(req.Messages))
+	case isWanModel(p.model):
 		attachments, err = p.generateInterleaved(ctx, prompt)
-	} else {
+	default:
 		attachments, err = p.generateSync(ctx, prompt)
 	}
 	if err != nil {
@@ -206,11 +220,102 @@ func (p *Provider) generateInterleaved(ctx context.Context, prompt string) ([]oa
 		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "marshal request: " + err.Error()}
 	}
 
-	// Create the async task.
 	createURL := p.baseURL + "/services/aigc/image-generation/generation"
+	taskID, err := p.createAsyncTask(ctx, createURL, payload)
+	if err != nil {
+		return nil, err
+	}
+	return p.pollTask(ctx, taskID)
+}
+
+// generateVideo handles Wan 2.7 video models (t2v / i2v / videoedit) via the
+// asynchronous video-synthesis endpoint (create task → poll). The result is a
+// single video URL (downloaded inline only when WithDownloadVideo is set).
+func (p *Provider) generateVideo(ctx context.Context, prompt string, atts []oasis.Attachment) ([]oasis.Attachment, error) {
+	input, err := p.videoInput(prompt, atts)
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"model": p.model,
+		"input": input,
+		"parameters": map[string]any{
+			"watermark":     false,
+			"prompt_extend": true,
+		},
+	})
+	if err != nil {
+		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "marshal request: " + err.Error()}
+	}
+
+	createURL := p.baseURL + "/services/aigc/video-generation/video-synthesis"
+	taskID, err := p.createAsyncTask(ctx, createURL, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := p.pollUntilComplete(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if out.videoURL == "" {
+		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "no video_url in completed task"}
+	}
+
+	if !p.downloadVideo {
+		return []oasis.Attachment{{MimeType: "video/mp4", URL: out.videoURL}}, nil
+	}
+	att, derr := p.download(ctx, out.videoURL, "video/", "video/mp4")
+	if derr != nil {
+		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "download video: " + derr.Error()}
+	}
+	return []oasis.Attachment{att}, nil
+}
+
+// videoInput builds the input.media payload for the active video model. All
+// wan2.7 video models share one media array typed by role.
+func (p *Provider) videoInput(prompt string, atts []oasis.Attachment) (map[string]any, error) {
+	model := strings.ToLower(p.model)
+	switch {
+	case strings.Contains(model, "i2v"):
+		img := firstAttachment(atts, "image/")
+		if img == nil {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "i2v requires an input image attachment"}
+		}
+		if img.URL == "" && len(img.Data) == 0 {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "i2v input image attachment has no URL or inline data"}
+		}
+		return map[string]any{
+			"prompt": prompt,
+			"media":  []map[string]any{{"type": "first_frame", "url": attachmentRef(*img)}},
+		}, nil
+	case strings.Contains(model, "videoedit"):
+		vid := firstAttachment(atts, "video/")
+		if vid == nil {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "videoedit requires an input video attachment"}
+		}
+		if vid.URL == "" && len(vid.Data) == 0 {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "videoedit input video attachment has no URL or inline data"}
+		}
+		media := []map[string]any{{"type": "video", "url": attachmentRef(*vid)}}
+		// Why: videoedit accepts an optional reference image to guide the edit.
+		if img := firstAttachment(atts, "image/"); img != nil {
+			media = append(media, map[string]any{"type": "reference_image", "url": attachmentRef(*img)})
+		}
+		return map[string]any{"prompt": prompt, "media": media}, nil
+	default: // t2v — text only, no media.
+		return map[string]any{"prompt": prompt}, nil
+	}
+}
+
+// createAsyncTask POSTs an async-create request (X-DashScope-Async: enable) and
+// returns the task_id. It is shared by the image-generation and video-synthesis
+// async paths.
+func (p *Provider) createAsyncTask(ctx context.Context, createURL string, payload []byte) (string, error) {
 	createReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "create request: " + err.Error()}
+		return "", &oasis.ErrLLM{Provider: p.Name(), Message: "create request: " + err.Error()}
 	}
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.Header.Set("Authorization", "Bearer "+p.apiKey)
@@ -218,12 +323,12 @@ func (p *Provider) generateInterleaved(ctx context.Context, prompt string) ([]oa
 
 	resp, err := p.client.Do(createReq)
 	if err != nil {
-		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "request failed: " + err.Error()}
+		return "", &oasis.ErrLLM{Provider: p.Name(), Message: "request failed: " + err.Error()}
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, p.httpErr(resp, body)
+		return "", p.httpErr(resp, body)
 	}
 
 	var created struct {
@@ -235,48 +340,80 @@ func (p *Provider) generateInterleaved(ctx context.Context, prompt string) ([]oa
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &created); err != nil {
-		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "decode create response: " + err.Error()}
+		return "", &oasis.ErrLLM{Provider: p.Name(), Message: "decode create response: " + err.Error()}
 	}
 	if created.Code != "" {
-		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: created.Code + ": " + created.Message}
+		return "", &oasis.ErrLLM{Provider: p.Name(), Message: created.Code + ": " + created.Message}
 	}
 	if created.Output.TaskID == "" {
-		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "no task_id returned"}
+		return "", &oasis.ErrLLM{Provider: p.Name(), Message: "no task_id returned"}
 	}
-
-	return p.pollTask(ctx, created.Output.TaskID)
+	return created.Output.TaskID, nil
 }
 
-// pollTask polls an async DashScope task until it succeeds, then downloads the
-// generated images.
+// taskOutput holds the parsed result of a completed async task. It carries both
+// possible result shapes: image URLs (interleaved image generation) and a single
+// video URL (video synthesis).
+type taskOutput struct {
+	imageURLs []string
+	videoURL  string
+}
+
+// pollTask polls an async DashScope image task until it succeeds, then downloads
+// the generated images. Its signature is preserved for the image path.
 func (p *Provider) pollTask(ctx context.Context, taskID string) ([]oasis.Attachment, error) {
+	out, err := p.pollUntilComplete(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	var attachments []oasis.Attachment
+	for _, url := range out.imageURLs {
+		att, derr := p.download(ctx, url, "image/", "image/png")
+		if derr != nil {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "download image: " + derr.Error()}
+		}
+		attachments = append(attachments, att)
+	}
+	return attachments, nil
+}
+
+// pollUntilComplete polls an async DashScope task until it reaches a terminal
+// state, parsing both result shapes (image choices and video_url). It uses the
+// shared 3s interval and honours ctx cancellation.
+func (p *Provider) pollUntilComplete(ctx context.Context, taskID string) (taskOutput, error) {
 	taskURL := p.baseURL + "/tasks/" + taskID
+	// Why: time.NewTimer + defer Stop avoids leaking a goroutine per iteration
+	// (time.After leaks until the timer fires if the context is canceled first).
+	t := time.NewTimer(3 * time.Second)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(3 * time.Second):
+			return taskOutput{}, ctx.Err()
+		case <-t.C:
+			t.Reset(3 * time.Second)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, taskURL, nil)
 		if err != nil {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "create poll request: " + err.Error()}
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: "create poll request: " + err.Error()}
 		}
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
 		resp, err := p.client.Do(req)
 		if err != nil {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "poll failed: " + err.Error()}
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: "poll failed: " + err.Error()}
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, p.httpErr(resp, body)
+			return taskOutput{}, p.httpErr(resp, body)
 		}
 
 		var task struct {
 			Output struct {
 				TaskStatus string `json:"task_status"`
+				VideoURL   string `json:"video_url"`
 				Choices    []struct {
 					Message struct {
 						Content []struct {
@@ -291,34 +428,34 @@ func (p *Provider) pollTask(ctx context.Context, taskID string) ([]oasis.Attachm
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(body, &task); err != nil {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "decode poll response: " + err.Error()}
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: "decode poll response: " + err.Error()}
 		}
 		if task.Code != "" {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: task.Code + ": " + task.Message}
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: task.Code + ": " + task.Message}
+		}
+		// Why: some failed async tasks report the error in output.code with an
+		// empty or "UNKNOWN" task_status rather than at the top level.
+		if task.Output.Code != "" {
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: task.Output.Code + ": " + task.Output.Message}
 		}
 
 		switch task.Output.TaskStatus {
 		case "SUCCEEDED":
-			var attachments []oasis.Attachment
+			out := taskOutput{videoURL: task.Output.VideoURL}
 			for _, choice := range task.Output.Choices {
 				for _, part := range choice.Message.Content {
-					if part.Image == "" {
-						continue
+					if part.Image != "" {
+						out.imageURLs = append(out.imageURLs, part.Image)
 					}
-					att, derr := p.download(ctx, part.Image)
-					if derr != nil {
-						return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "download image: " + derr.Error()}
-					}
-					attachments = append(attachments, att)
 				}
 			}
-			return attachments, nil
+			return out, nil
 		case "FAILED", "CANCELED", "UNKNOWN":
 			msg := task.Output.Message
 			if msg == "" {
 				msg = "task " + task.Output.TaskStatus
 			}
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: msg}
+			return taskOutput{}, &oasis.ErrLLM{Provider: p.Name(), Message: msg}
 		default:
 			// PENDING / RUNNING — keep polling.
 		}
@@ -357,7 +494,7 @@ func (p *Provider) downloadImages(ctx context.Context, parsed genResponse) ([]oa
 			if part.Image == "" {
 				continue
 			}
-			att, derr := p.download(ctx, part.Image)
+			att, derr := p.download(ctx, part.Image, "image/", "image/png")
 			if derr != nil {
 				return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "download image: " + derr.Error()}
 			}
@@ -373,8 +510,39 @@ func isWanModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "wan")
 }
 
-// download fetches a generated image URL and returns it as an inline Attachment.
-func (p *Provider) download(ctx context.Context, url string) (oasis.Attachment, error) {
+// isVideoModel reports whether model is a Wan 2.7 video model (text-to-video,
+// image-to-video, or video editing). Video model ids also start with "wan", so
+// callers must check this before isWanModel.
+func isVideoModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "t2v") || strings.Contains(m, "i2v") || strings.Contains(m, "videoedit")
+}
+
+// attachmentRef returns the reference DashScope should use for an attachment:
+// its URL if set, otherwise a base64 data URI built from its inline bytes.
+// Callers must ensure that either URL or Data is set before calling.
+func attachmentRef(a oasis.Attachment) string {
+	if a.URL != "" {
+		return a.URL
+	}
+	return "data:" + a.MimeType + ";base64," + base64.StdEncoding.EncodeToString(a.Data)
+}
+
+// firstAttachment returns the first attachment whose MimeType has mimePrefix, or
+// nil if none match.
+func firstAttachment(atts []oasis.Attachment, mimePrefix string) *oasis.Attachment {
+	for i := range atts {
+		if strings.HasPrefix(atts[i].MimeType, mimePrefix) {
+			return &atts[i]
+		}
+	}
+	return nil
+}
+
+// download fetches a generated media URL and returns it as an inline Attachment.
+// The MIME type is the response Content-Type when it has wantPrefix, otherwise
+// fallback (so a video is never mislabelled as an image, and vice versa).
+func (p *Provider) download(ctx context.Context, url, wantPrefix, fallback string) (oasis.Attachment, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return oasis.Attachment{}, err
@@ -387,13 +555,16 @@ func (p *Provider) download(ctx context.Context, url string) (oasis.Attachment, 
 	if resp.StatusCode != http.StatusOK {
 		return oasis.Attachment{}, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes+1))
 	if err != nil {
 		return oasis.Attachment{}, err
 	}
+	if len(data) > maxDownloadBytes {
+		return oasis.Attachment{}, fmt.Errorf("downloaded media exceeds %d byte cap", maxDownloadBytes)
+	}
 	mime := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(mime, "image/") {
-		mime = "image/png"
+	if !strings.HasPrefix(mime, wantPrefix) {
+		mime = fallback
 	}
 	return oasis.Attachment{MimeType: mime, Data: data}, nil
 }
@@ -413,6 +584,20 @@ func lastUserText(messages []oasis.ChatMessage) string {
 	}
 	return ""
 }
+
+// lastUserAttachments returns the attachments of the last user-role message, or
+// nil if there is no such message (or it has none).
+func lastUserAttachments(messages []oasis.ChatMessage) []oasis.Attachment {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == oasis.RoleUser {
+			return messages[i].Attachments
+		}
+	}
+	return nil
+}
+
+// maxDownloadBytes is the cap on downloaded media (images/video): 512 MiB.
+const maxDownloadBytes = 512 << 20
 
 // Compile-time interface check.
 var _ oasis.Provider = (*Provider)(nil)

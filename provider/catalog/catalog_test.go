@@ -368,6 +368,105 @@ func findModel(models []oasis.ModelInfo, id string) *oasis.ModelInfo {
 	return nil
 }
 
+// TestIsDashScopeVideoModel verifies the video-model predicate matches Wan
+// video IDs and does not match image or chat models.
+func TestIsDashScopeVideoModel(t *testing.T) {
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		{"wan2.7-t2v", true},
+		{"wan2.7-i2v", true},
+		{"wan2.7-videoedit", true},
+		{"WAN2.7-T2V", true},    // case-insensitive
+		{"wan2.6-image", false}, // image model, not video
+		{"wan2.7-image", false},
+		{"qwen-image-2.0", false},
+		{"qwen-turbo", false},
+		{"gpt-4o", false},
+	}
+	for _, tc := range cases {
+		if got := isDashScopeVideoModel(tc.model); got != tc.want {
+			t.Errorf("isDashScopeVideoModel(%q) = %v, want %v", tc.model, got, tc.want)
+		}
+	}
+}
+
+// TestCreateProviderDashScopeVideoRouting verifies that Wan video models
+// selected under the OpenAI-compatible "Qwen" platform (BaseURL contains
+// "dashscope") are routed to the native DashScope provider rather than the
+// openaicompat provider.
+func TestCreateProviderDashScopeVideoRouting(t *testing.T) {
+	// Mirror of the built-in Qwen platform that uses OpenAI-compat mode.
+	qwenPlatform := oasis.Platform{
+		Name:     "Qwen",
+		Protocol: oasis.ProtocolOpenAICompat,
+		BaseURL:  "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+	}
+
+	videoModels := []string{"wan2.7-t2v", "wan2.7-i2v", "wan2.7-videoedit"}
+	for _, model := range videoModels {
+		prov, err := createProvider(qwenPlatform, "test-key", model)
+		if err != nil {
+			t.Fatalf("createProvider(%q): %v", model, err)
+		}
+		if prov.Name() != "dashscope" {
+			t.Errorf("model %q: provider Name() = %q, want %q", model, prov.Name(), "dashscope")
+		}
+	}
+
+	// Sanity: a regular chat model must still go to openaicompat.
+	chatProv, err := createProvider(qwenPlatform, "test-key", "qwen-turbo")
+	if err != nil {
+		t.Fatalf("createProvider(qwen-turbo): %v", err)
+	}
+	if chatProv.Name() == "dashscope" {
+		t.Errorf("qwen-turbo should not route to dashscope provider")
+	}
+}
+
+// TestDashscopeListerVideoModels verifies that dashscopeLister.listModels
+// emits all three Wan video models with OutputModalities == ["video"] alongside
+// the existing image models.
+func TestDashscopeListerVideoModels(t *testing.T) {
+	ctx := context.Background()
+	l := &dashscopeLister{}
+	models, err := l.listModels(ctx, "https://dashscope-intl.aliyuncs.com/api/v1", "test-key")
+	if err != nil {
+		t.Fatalf("listModels: %v", err)
+	}
+
+	wantVideo := []string{"wan2.7-t2v", "wan2.7-i2v", "wan2.7-videoedit"}
+	for _, id := range wantVideo {
+		m := findModel(models, id)
+		if m == nil {
+			t.Errorf("model %q not found in dashscope lister output", id)
+			continue
+		}
+		if len(m.OutputModalities) != 1 || m.OutputModalities[0] != "video" {
+			t.Errorf("model %q: OutputModalities = %v, want [video]", id, m.OutputModalities)
+		}
+		if m.Provider != "dashscope" {
+			t.Errorf("model %q: Provider = %q, want 'dashscope'", id, m.Provider)
+		}
+		if m.Status != oasis.ModelStatusAvailable {
+			t.Errorf("model %q: Status = %v, want Available", id, m.Status)
+		}
+	}
+
+	// Image models must still be present.
+	for _, id := range dashscopeImageModels {
+		m := findModel(models, id)
+		if m == nil {
+			t.Errorf("image model %q missing from dashscope lister output", id)
+			continue
+		}
+		if len(m.OutputModalities) != 1 || m.OutputModalities[0] != "image" {
+			t.Errorf("image model %q: OutputModalities = %v, want [image]", id, m.OutputModalities)
+		}
+	}
+}
+
 // TestListPartialFailure verifies that List surfaces errors from failing
 // providers while still returning models from healthy providers.
 func TestListPartialFailure(t *testing.T) {

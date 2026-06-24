@@ -388,11 +388,11 @@ func createProvider(platform oasis.Platform, apiKey, model string) (oasis.Provid
 	case oasis.ProtocolDashScope:
 		return dashscope.New(apiKey, model, dashscopeNativeBaseURL(platform.BaseURL)), nil
 	default:
-		// DashScope image models (qwen-image*) are NOT served over the
+		// DashScope image and video models are NOT served over the
 		// OpenAI-compatible chat endpoint. Route them to the native
 		// multimodal-generation API even when the model is selected under the
 		// compatible-mode "Qwen" platform — otherwise the request 500s.
-		if isDashScopeImageModel(model) && strings.Contains(platform.BaseURL, "dashscope") {
+		if (isDashScopeImageModel(model) || isDashScopeVideoModel(model)) && strings.Contains(platform.BaseURL, "dashscope") {
 			return dashscope.New(apiKey, model, dashscopeNativeBaseURL(platform.BaseURL)), nil
 		}
 		var provOpts []openaicompat.ProviderOption
@@ -408,6 +408,16 @@ func isDashScopeImageModel(model string) bool {
 	m := strings.ToLower(model)
 	return strings.HasPrefix(m, "qwen-image") ||
 		(strings.HasPrefix(m, "wan") && strings.Contains(m, "image"))
+}
+
+// isDashScopeVideoModel reports whether model is a DashScope Wan video model
+// (text/image/video -> video) served by the native video-synthesis API.
+// Why: Wan video models share the "wan" prefix with image models but use a
+// different synthesis endpoint; they must not be sent to the chat path.
+func isDashScopeVideoModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "wan") &&
+		(strings.Contains(m, "t2v") || strings.Contains(m, "i2v") || strings.Contains(m, "videoedit"))
 }
 
 // dashscopeNativeBaseURL maps a DashScope compatible-mode base URL to the

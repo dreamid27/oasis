@@ -6,7 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
-## [0.22.0] - 2026-06-21
+### Added
+
+- **`provider/dashscope` Wan 2.7 video generation** — text-to-video
+  (`wan2.7-t2v`), image-to-video (`wan2.7-i2v`), and video editing
+  (`wan2.7-videoedit`) via DashScope's async `video-generation/video-synthesis`
+  endpoint (create task → poll `output.video_url`). `ChatStream` routes video
+  model ids (those containing `t2v`/`i2v`/`videoedit`) to the new path; `i2v`
+  and `videoedit` read their input image/video from the last user message's
+  `Attachments` (URL or inline `data:` base64). The result is returned as a
+  single `video/mp4` Attachment carrying the URL by default (DashScope URLs
+  expire ~24h); the new **`dashscope.WithDownloadVideo()`** option fetches the
+  bytes inline instead. The catalog now lists the three models
+  (`OutputModalities: ["video"]`) and routes them to the native endpoint even
+  under the OpenAI-compatible `qwen` platform.
 
 ### Added
 

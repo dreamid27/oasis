@@ -123,3 +123,45 @@ func TestLiveWanImage(t *testing.T) {
 	}
 	t.Logf("wan OK: images=%d mime=%s bytes=%d", len(resp.Attachments), resp.Attachments[0].MimeType, len(resp.Attachments[0].Data))
 }
+
+// TestLiveWanVideo verifies the Wan 2.7 text-to-video path via the native
+// DashScope platform (model=wan2.7-t2v → async video-synthesis task).
+// Network-gated: set DASHSCOPE_API_KEY to run.
+func TestLiveWanVideo(t *testing.T) {
+	key := os.Getenv("DASHSCOPE_API_KEY")
+	if key == "" {
+		t.Skip("DASHSCOPE_API_KEY not set")
+	}
+
+	cat := catalog.NewModelCatalog()
+	if err := cat.Add("dashscope", key); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	prov, err := cat.CreateProviderByID(ctx, "dashscope", "wan2.7-t2v")
+	if err != nil {
+		t.Fatalf("CreateProviderByID: %v", err)
+	}
+	if prov.Name() != "dashscope" {
+		t.Fatalf("expected dashscope provider, got %q", prov.Name())
+	}
+
+	resp, err := prov.ChatStream(ctx, oasis.ChatRequest{
+		Messages:   []oasis.ChatMessage{oasis.UserMessage("a galloping horse on a beach at sunset, cinematic")},
+		Modalities: []string{"video", "text"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if len(resp.Attachments) == 0 {
+		t.Fatalf("no video attachment returned")
+	}
+	att := resp.Attachments[0]
+	if att.URL == "" && len(att.Data) == 0 {
+		t.Fatalf("video attachment has neither URL nor bytes")
+	}
+	t.Logf("wan video OK: mime=%s url=%q bytes=%d", att.MimeType, att.URL, len(att.Data))
+}
