@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-24
+
 ### Added
 
 - **`provider/dashscope` Wan 2.7 video generation** — text-to-video
