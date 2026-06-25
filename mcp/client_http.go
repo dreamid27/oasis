@@ -1,12 +1,14 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -47,7 +49,8 @@ func (c *HTTPClient) call(ctx context.Context, method string, params json.RawMes
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
+	// Streamable-HTTP servers (e.g. GitHub) reject requests that don't accept both.
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range c.headers {
 		httpReq.Header.Set(k, v)
 	}
@@ -71,6 +74,15 @@ func (c *HTTPClient) call(ctx context.Context, method string, params json.RawMes
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
+	}
+
+	// Streamable-HTTP servers may answer a single request with an SSE stream
+	// instead of a JSON body; pull the JSON-RPC payload out of the data events.
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		raw, err = sseJSONPayload(raw)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var rpcResp rpcResponse
@@ -186,6 +198,47 @@ func (c *HTTPClient) setLogLevel(ctx context.Context, level LogLevel) error {
 	params, _ := json.Marshal(map[string]string{"level": string(level)})
 	_, err := c.call(ctx, "logging/setLevel", params)
 	return err
+}
+
+// sseJSONPayload extracts the JSON-RPC response from an SSE body. A server may
+// interleave notifications/requests (also jsonrpc:"2.0") with the response on the
+// same stream, so we keep only a data event that carries a result or error — the
+// actual response to our request — not merely the last jsonrpc-shaped event.
+func sseJSONPayload(raw []byte) ([]byte, error) {
+	var data []string
+	var found []byte
+	flush := func() {
+		if len(data) == 0 {
+			return
+		}
+		joined := strings.Join(data, "\n")
+		data = nil
+		var probe rpcResponse
+		if json.Unmarshal([]byte(joined), &probe) == nil && probe.JSONRPC != "" &&
+			(len(probe.Result) > 0 || probe.Error != nil) {
+			found = []byte(joined)
+		}
+	}
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" {
+			flush()
+			continue
+		}
+		if d, ok := strings.CutPrefix(line, "data:"); ok {
+			data = append(data, strings.TrimPrefix(d, " "))
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("read SSE response (line too large or read error): %w", err)
+	}
+	flush()
+	if found == nil {
+		return nil, fmt.Errorf("no JSON-RPC data event in SSE response (body: %s)", raw)
+	}
+	return found, nil
 }
 
 // Close releases idle connections. HTTP is stateless so no active connections

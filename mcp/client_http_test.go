@@ -43,6 +43,64 @@ func newFakeHTTPServer(t *testing.T, handler func(method string, params json.Raw
 	return s, callCount
 }
 
+func TestHTTPClient_SSEResponse(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			t.Errorf("Accept missing text/event-stream: %q", r.Header.Get("Accept"))
+		}
+		body, _ := io.ReadAll(r.Body)
+		var req rpcRequest
+		json.Unmarshal(body, &req)
+		result, _ := json.Marshal(map[string]any{
+			"protocolVersion": "2024-11-05",
+			"serverInfo":      map[string]any{"name": "sse-test", "version": "1.0"},
+		})
+		resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result}
+		payload, _ := json.Marshal(&resp)
+		w.Header().Set("Content-Type", "text/event-stream")
+		// A notification event before the real response must be skipped.
+		fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notify\"}\n\nevent: message\ndata: %s\n\n", payload)
+	}))
+	t.Cleanup(s.Close)
+
+	c := NewHTTPClient(s.URL, nil, nil, 5*time.Second)
+	info, err := c.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("init over SSE: %v", err)
+	}
+	if info.ServerInfo.Name != "sse-test" {
+		t.Errorf("got %+v", info)
+	}
+}
+
+func TestHTTPClient_SSEResponseAfterNotification(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req rpcRequest
+		json.Unmarshal(body, &req)
+		result, _ := json.Marshal(map[string]any{
+			"protocolVersion": "2024-11-05",
+			"serverInfo":      map[string]any{"name": "sse-trail", "version": "1.0"},
+		})
+		resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result}
+		payload, _ := json.Marshal(&resp)
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Response FIRST, then a trailing notification — the notification must not
+		// overwrite the real response.
+		fmt.Fprintf(w, "event: message\ndata: %s\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n", payload)
+	}))
+	t.Cleanup(s.Close)
+
+	c := NewHTTPClient(s.URL, nil, nil, 5*time.Second)
+	info, err := c.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("init over SSE: %v", err)
+	}
+	if info.ServerInfo.Name != "sse-trail" {
+		t.Errorf("got %+v", info)
+	}
+}
+
 func TestHTTPClient_Initialize(t *testing.T) {
 	srv, _ := newFakeHTTPServer(t, func(method string, _ json.RawMessage) (interface{}, error) {
 		if method != "initialize" {

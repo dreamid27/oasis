@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mcp` HTTP client supports Streamable-HTTP servers** — sends
+  `Accept: application/json, text/event-stream` (some servers, e.g. GitHub,
+  reject requests that don't accept both) and, when a server answers a single
+  request with an SSE stream instead of a JSON body, extracts the JSON-RPC
+  response from the `data:` events (skipping interleaved notifications/requests
+  on the same stream).
+
 ## [0.23.0] - 2026-06-24
 
 ### Added
