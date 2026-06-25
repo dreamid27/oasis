@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-06-25
+
 ### Fixed
 
 - **`mcp` HTTP client supports Streamable-HTTP servers** — sends
