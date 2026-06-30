@@ -306,11 +306,20 @@ type Attachment struct {
 	// Data carries raw inline bytes. encoding/json marshals []byte as a
 	// base64 string on the wire, so JSON round-trips preserve binary content.
 	Data []byte `json:"data,omitempty"`
+	// Role disambiguates inputs that share a mime prefix (image/*, audio/*).
+	// Wan video roles: first_frame, last_frame, driving_audio, first_clip,
+	// reference_image, audio. Empty → inferred from mime (back-compat).
+	Role string `json:"role,omitempty"`
 }
 
 // NewAttachment constructs an Attachment from raw inline bytes.
 func NewAttachment(mime string, data []byte) Attachment {
 	return Attachment{MimeType: mime, Data: data}
+}
+
+// NewAttachmentWithRole constructs an inline Attachment tagged with a role.
+func NewAttachmentWithRole(mime, role string, data []byte) Attachment {
+	return Attachment{MimeType: mime, Role: role, Data: data}
 }
 
 // NewAttachmentFromURL constructs an Attachment from a remote URL.
@@ -394,6 +403,17 @@ type GenerationParams struct {
 	MaxTokens   *int     `json:"max_tokens,omitempty"`
 }
 
+// VideoOptions carries Wan-style video-synthesis parameters. Nil pointers /
+// zero values are omitted from the request so providers apply their defaults.
+type VideoOptions struct {
+	Duration       int    // seconds (e.g. 10, 15); 0 = omit
+	Resolution     string // "720P" | "1080P"; "" = omit
+	Ratio          string // "16:9" | "9:16" | "1:1"; "" = omit
+	NegativePrompt string // "" = omit
+	PromptExtend   *bool  // nil = omit
+	Watermark      *bool  // nil = omit
+}
+
 type ChatRequest struct {
 	Messages         []ChatMessage     `json:"messages"`
 	Tools            []ToolDefinition  `json:"tools,omitempty"`
@@ -405,6 +425,8 @@ type ChatRequest struct {
 	// agnostic: OpenAI-compatible providers map it to the request's
 	// `modalities` field; Gemini maps it to responseModalities.
 	Modalities []string `json:"modalities,omitempty"`
+	// Video carries video-synthesis options for video models; ignored otherwise.
+	Video *VideoOptions `json:"video,omitempty"`
 }
 
 type ChatResponse struct {

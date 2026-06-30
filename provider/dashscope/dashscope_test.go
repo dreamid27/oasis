@@ -557,7 +557,7 @@ func TestGenerateVideo_T2V(t *testing.T) {
 
 	p := New("test-key", "wan2.7-t2v", srv.URL, WithHTTPClient(srv.Client()))
 
-	atts, err := p.generateVideo(context.Background(), "a galloping horse", nil)
+	atts, err := p.generateVideo(context.Background(), "a galloping horse", nil, nil)
 	if err != nil {
 		t.Fatalf("generateVideo: %v", err)
 	}
@@ -589,8 +589,8 @@ func TestGenerateVideo_T2V(t *testing.T) {
 	if params == nil {
 		t.Fatalf("missing parameters in create body: %v", createBody)
 	}
-	if params["watermark"] != false {
-		t.Errorf("expected parameters.watermark == false, got %v", params["watermark"])
+	if _, ok := params["watermark"]; ok {
+		t.Errorf("expected parameters.watermark omitted by default, got %v", params["watermark"])
 	}
 	if params["prompt_extend"] != true {
 		t.Errorf("expected parameters.prompt_extend == true, got %v", params["prompt_extend"])
@@ -625,7 +625,7 @@ func TestGenerateVideo_I2V_BuildsMedia(t *testing.T) {
 	imgURL := "https://example.com/frame.png"
 	_, err := p.generateVideo(context.Background(), "animate", []oasis.Attachment{
 		{MimeType: "image/png", URL: imgURL},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("generateVideo: %v", err)
 	}
@@ -646,8 +646,8 @@ func TestGenerateVideo_I2V_BuildsMedia(t *testing.T) {
 	if params == nil {
 		t.Fatalf("missing parameters in create body: %v", createBody)
 	}
-	if params["watermark"] != false {
-		t.Errorf("expected parameters.watermark == false, got %v", params["watermark"])
+	if _, ok := params["watermark"]; ok {
+		t.Errorf("expected parameters.watermark omitted by default, got %v", params["watermark"])
 	}
 	if params["prompt_extend"] != true {
 		t.Errorf("expected parameters.prompt_extend == true, got %v", params["prompt_extend"])
@@ -656,7 +656,7 @@ func TestGenerateVideo_I2V_BuildsMedia(t *testing.T) {
 
 func TestGenerateVideo_I2V_NoImageErrors(t *testing.T) {
 	p := New("test-key", "wan2.7-i2v", "http://localhost")
-	_, err := p.generateVideo(context.Background(), "animate", nil)
+	_, err := p.generateVideo(context.Background(), "animate", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when i2v has no image attachment")
 	}
@@ -693,9 +693,9 @@ func TestGenerateVideo_VideoEdit_BuildsMedia(t *testing.T) {
 	vidURL := "https://example.com/in.mp4"
 	imgURL := "https://example.com/ref.png"
 	_, err := p.generateVideo(context.Background(), "edit it", []oasis.Attachment{
-		{MimeType: "video/mp4", URL: vidURL},
-		{MimeType: "image/png", URL: imgURL},
-	})
+		{MimeType: "video/mp4", Role: "video", URL: vidURL},
+		{MimeType: "image/png", Role: "reference_image", URL: imgURL},
+	}, nil)
 	if err != nil {
 		t.Fatalf("generateVideo: %v", err)
 	}
@@ -717,8 +717,8 @@ func TestGenerateVideo_VideoEdit_BuildsMedia(t *testing.T) {
 	if params == nil {
 		t.Fatalf("missing parameters in create body: %v", createBody)
 	}
-	if params["watermark"] != false {
-		t.Errorf("expected parameters.watermark == false, got %v", params["watermark"])
+	if _, ok := params["watermark"]; ok {
+		t.Errorf("expected parameters.watermark omitted by default, got %v", params["watermark"])
 	}
 	if params["prompt_extend"] != true {
 		t.Errorf("expected parameters.prompt_extend == true, got %v", params["prompt_extend"])
@@ -729,7 +729,7 @@ func TestGenerateVideo_VideoEdit_NoVideoErrors(t *testing.T) {
 	p := New("test-key", "wan2.7-videoedit", "http://localhost")
 	_, err := p.generateVideo(context.Background(), "edit", []oasis.Attachment{
 		{MimeType: "image/png", URL: "https://example.com/x.png"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error when videoedit has no video attachment")
 	}
@@ -778,7 +778,7 @@ func TestGenerateVideo_WithDownloadVideo(t *testing.T) {
 
 	p := New("test-key", "wan2.7-t2v", srv.URL, WithHTTPClient(srv.Client()), WithDownloadVideo())
 
-	atts, err := p.generateVideo(context.Background(), "a horse", nil)
+	atts, err := p.generateVideo(context.Background(), "a horse", nil, nil)
 	if err != nil {
 		t.Fatalf("generateVideo: %v", err)
 	}
@@ -898,5 +898,62 @@ func TestChatStream_ChannelClosedOnSuccess(t *testing.T) {
 
 	// Drain; channel must be closed (range must terminate, not block).
 	for range ch {
+	}
+}
+
+func TestVideoInputRoles(t *testing.T) {
+	p := &Provider{model: "wan2.7-i2v-2026-04-25"}
+	atts := []oasis.Attachment{
+		{MimeType: "image/png", Role: "first_frame", URL: "f.png"},
+		{MimeType: "audio/mp3", Role: "driving_audio", URL: "a.mp3"},
+	}
+	in, err := p.videoInput("hi", atts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := in["media"].([]map[string]any)
+	if len(media) != 2 || media[0]["type"] != "first_frame" || media[1]["type"] != "driving_audio" {
+		t.Fatalf("got media %v", media)
+	}
+}
+
+func TestVideoInputT2VAudioAndNegative(t *testing.T) {
+	p := &Provider{model: "wan2.7-t2v"}
+	atts := []oasis.Attachment{{MimeType: "audio/mp3", Role: "audio", URL: "a.mp3"}}
+	in, err := p.videoInput("hi", atts, &oasis.VideoOptions{NegativePrompt: "flower"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in["audio_url"] != "a.mp3" {
+		t.Fatalf("expected audio_url, got %v", in)
+	}
+	if in["negative_prompt"] != "flower" {
+		t.Fatalf("expected negative_prompt in input, got %v", in)
+	}
+}
+
+func TestVideoInputContinuation(t *testing.T) {
+	p := &Provider{model: "wan2.7-i2v-2026-04-25"}
+	atts := []oasis.Attachment{{MimeType: "video/mp4", Role: "first_clip", URL: "c.mp4"}}
+	in, err := p.videoInput("hi", atts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := in["media"].([]map[string]any)
+	if len(media) != 1 || media[0]["type"] != "first_clip" {
+		t.Fatalf("got media %v", media)
+	}
+}
+
+func TestVideoParametersFromOptions(t *testing.T) {
+	got := videoParameters(&oasis.VideoOptions{Duration: 15, Resolution: "1080P", Ratio: "16:9"})
+	if got["duration"] != 15 || got["resolution"] != "1080P" || got["ratio"] != "16:9" {
+		t.Fatalf("got %v", got)
+	}
+	if _, ok := got["watermark"]; ok {
+		t.Fatalf("watermark must be omitted when nil")
+	}
+	if got["prompt_extend"] != true {
+		t.Fatalf("prompt_extend should default true, got %v", got["prompt_extend"])
 	}
 }
