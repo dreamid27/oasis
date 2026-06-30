@@ -193,6 +193,14 @@ func (c *ModelCatalog) AddCustom(identifier, baseURL, apiKey string) error {
 
 	key := strings.ToLower(identifier)
 
+	// Preserve a known platform's native protocol (e.g. dashscope) when a custom
+	// base URL is supplied — a self-hosted/dedicated DashScope endpoint still
+	// speaks the DashScope protocol, not OpenAI-compat.
+	protocol := oasis.ProtocolOpenAICompat
+	if p, ok := protocolOverrides[key]; ok {
+		protocol = p
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -205,7 +213,7 @@ func (c *ModelCatalog) AddCustom(identifier, baseURL, apiKey string) error {
 	c.providers[key] = &providerEntry{
 		platform: oasis.Platform{
 			Name:     identifier,
-			Protocol: oasis.ProtocolOpenAICompat,
+			Protocol: protocol,
 			BaseURL:  baseURL,
 		},
 		apiKey: apiKey,

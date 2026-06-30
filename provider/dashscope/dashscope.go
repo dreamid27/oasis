@@ -144,7 +144,7 @@ func (p *Provider) ChatStream(ctx context.Context, req oasis.ChatRequest, ch cha
 	// checked before isWanModel — order matters.
 	switch {
 	case isVideoModel(p.model):
-		attachments, err = p.generateVideo(ctx, prompt, lastUserAttachments(req.Messages))
+		attachments, err = p.generateVideo(ctx, prompt, lastUserAttachments(req.Messages), req.Video)
 	case isWanModel(p.model):
 		attachments, err = p.generateInterleaved(ctx, prompt)
 	default:
@@ -231,19 +231,16 @@ func (p *Provider) generateInterleaved(ctx context.Context, prompt string) ([]oa
 // generateVideo handles Wan 2.7 video models (t2v / i2v / videoedit) via the
 // asynchronous video-synthesis endpoint (create task → poll). The result is a
 // single video URL (downloaded inline only when WithDownloadVideo is set).
-func (p *Provider) generateVideo(ctx context.Context, prompt string, atts []oasis.Attachment) ([]oasis.Attachment, error) {
-	input, err := p.videoInput(prompt, atts)
+func (p *Provider) generateVideo(ctx context.Context, prompt string, atts []oasis.Attachment, v *oasis.VideoOptions) ([]oasis.Attachment, error) {
+	input, err := p.videoInput(prompt, atts, v)
 	if err != nil {
 		return nil, err
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"model": p.model,
-		"input": input,
-		"parameters": map[string]any{
-			"watermark":     false,
-			"prompt_extend": true,
-		},
+		"model":      p.model,
+		"input":      input,
+		"parameters": videoParameters(v),
 	})
 	if err != nil {
 		return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "marshal request: " + err.Error()}
@@ -273,40 +270,93 @@ func (p *Provider) generateVideo(ctx context.Context, prompt string, atts []oasi
 	return []oasis.Attachment{att}, nil
 }
 
-// videoInput builds the input.media payload for the active video model. All
-// wan2.7 video models share one media array typed by role.
-func (p *Provider) videoInput(prompt string, atts []oasis.Attachment) (map[string]any, error) {
+// videoInput builds the input payload for the active video model. All wan2.7
+// video models share one media array typed by attachment Role; t2v carries an
+// optional audio_url / negative_prompt instead.
+func (p *Provider) videoInput(prompt string, atts []oasis.Attachment, v *oasis.VideoOptions) (map[string]any, error) {
 	model := strings.ToLower(p.model)
+	byRole := func(role string) *oasis.Attachment {
+		for i := range atts {
+			if atts[i].Role == role {
+				return &atts[i]
+			}
+		}
+		return nil
+	}
+	ref := func(a *oasis.Attachment) string { return attachmentRef(*a) }
+
 	switch {
-	case strings.Contains(model, "i2v"):
-		img := firstAttachment(atts, "image/")
-		if img == nil {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "i2v requires an input image attachment"}
-		}
-		if img.URL == "" && len(img.Data) == 0 {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "i2v input image attachment has no URL or inline data"}
-		}
-		return map[string]any{
-			"prompt": prompt,
-			"media":  []map[string]any{{"type": "first_frame", "url": attachmentRef(*img)}},
-		}, nil
 	case strings.Contains(model, "videoedit"):
-		vid := firstAttachment(atts, "video/")
+		vid := byRole("video")
+		if vid == nil {
+			vid = firstAttachment(atts, "video/")
+		}
 		if vid == nil {
 			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "videoedit requires an input video attachment"}
 		}
-		if vid.URL == "" && len(vid.Data) == 0 {
-			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "videoedit input video attachment has no URL or inline data"}
-		}
-		media := []map[string]any{{"type": "video", "url": attachmentRef(*vid)}}
-		// Why: videoedit accepts an optional reference image to guide the edit.
-		if img := firstAttachment(atts, "image/"); img != nil {
-			media = append(media, map[string]any{"type": "reference_image", "url": attachmentRef(*img)})
+		media := []map[string]any{{"type": "video", "url": ref(vid)}}
+		if img := byRole("reference_image"); img != nil {
+			media = append(media, map[string]any{"type": "reference_image", "url": ref(img)})
 		}
 		return map[string]any{"prompt": prompt, "media": media}, nil
-	default: // t2v — text only, no media.
-		return map[string]any{"prompt": prompt}, nil
+	case strings.Contains(model, "i2v"):
+		// Native continuation: a prior clip seeds the next segment directly.
+		if clip := byRole("first_clip"); clip != nil {
+			return map[string]any{
+				"prompt": prompt,
+				"media":  []map[string]any{{"type": "first_clip", "url": ref(clip)}},
+			}, nil
+		}
+		first := byRole("first_frame")
+		if first == nil {
+			first = firstAttachment(atts, "image/")
+		}
+		if first == nil {
+			return nil, &oasis.ErrLLM{Provider: p.Name(), Message: "i2v requires an input image attachment"}
+		}
+		media := []map[string]any{{"type": "first_frame", "url": ref(first)}}
+		if last := byRole("last_frame"); last != nil {
+			media = append(media, map[string]any{"type": "last_frame", "url": ref(last)})
+		}
+		if audio := byRole("driving_audio"); audio != nil {
+			media = append(media, map[string]any{"type": "driving_audio", "url": ref(audio)})
+		}
+		return map[string]any{"prompt": prompt, "media": media}, nil
+	default: // t2v — text, optional audio + negative prompt.
+		in := map[string]any{"prompt": prompt}
+		if audio := byRole("audio"); audio != nil {
+			in["audio_url"] = ref(audio)
+		}
+		if v != nil && v.NegativePrompt != "" {
+			in["negative_prompt"] = v.NegativePrompt
+		}
+		return in, nil
 	}
+}
+
+// videoParameters maps VideoOptions to the request parameters block, omitting
+// zero/nil fields so DashScope applies its defaults.
+func videoParameters(v *oasis.VideoOptions) map[string]any {
+	params := map[string]any{"prompt_extend": true}
+	if v == nil {
+		return params
+	}
+	if v.Duration > 0 {
+		params["duration"] = v.Duration
+	}
+	if v.Resolution != "" {
+		params["resolution"] = v.Resolution
+	}
+	if v.Ratio != "" {
+		params["ratio"] = v.Ratio
+	}
+	if v.PromptExtend != nil {
+		params["prompt_extend"] = *v.PromptExtend
+	}
+	if v.Watermark != nil {
+		params["watermark"] = *v.Watermark
+	}
+	return params
 }
 
 // createAsyncTask POSTs an async-create request (X-DashScope-Async: enable) and

@@ -6,6 +6,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-30
+
+### Added
+
+- **`core.VideoOptions` for Wan 2.7 video synthesis** — new optional
+  `ChatRequest.Video` field carries `Duration`, `Resolution`, `Ratio`,
+  `NegativePrompt`, and `*bool` `PromptExtend` / `Watermark`. Zero/nil fields are
+  omitted so DashScope applies its own defaults (watermark is no longer forced to
+  `false`; `prompt_extend` still defaults to `true`).
+- **`core.Attachment.Role`** plus **`core.NewAttachmentWithRole`** — tags inputs
+  that share a mime prefix so video models can disambiguate them. Wan roles:
+  `first_frame`, `last_frame`, `driving_audio`, `first_clip`, `reference_image`,
+  `audio`. Empty `Role` falls back to mime inference (back-compat).
+- **`provider/dashscope` extended Wan 2.7 inputs** — `i2v` accepts `last_frame`,
+  `driving_audio`, and `first_clip` (native clip continuation); `videoedit`
+  accepts an optional `reference_image`; `t2v` accepts an `audio` attachment
+  (`audio_url`) and `NegativePrompt`. Catalog lists `wan2.7-i2v-2026-04-25`.
+
+### Changed
+
+- **`provider/catalog` preserves a platform's native protocol with a custom base
+  URL** — a self-hosted/dedicated DashScope endpoint keeps the DashScope protocol
+  instead of being forced to OpenAI-compat.
+
 ## [0.23.1] - 2026-06-25
 
 ### Fixed

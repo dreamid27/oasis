@@ -31,6 +31,7 @@ var dashscopeImageModels = []string{
 var dashscopeVideoModels = []string{
 	"wan2.7-t2v",
 	"wan2.7-i2v",
+	"wan2.7-i2v-2026-04-25",
 	"wan2.7-videoedit",
 }
 
