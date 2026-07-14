@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-14
+
+### Added
+
+- **Tool-call replay in history** — `memory.HistoryConfig` gains
+  `ReplayToolCalls`, which expands persisted step traces back into
+  tool_call/tool_result message pairs when history is replayed, so the model
+  keeps seeing what ran in earlier turns (and the results) instead of only the
+  final answer text. `ReplayVerbatimTurns` (default 2) controls how many recent
+  assistant turns replay full tool outputs — older turns replay a bounded
+  display digest — and `ProtectedTools` names tools whose output always replays
+  in full regardless of turn age. Off by default.
+
+### Fixed
+
+- **`agent` persists the turn on a hook-forced stop** — when an
+  `OnIterationComplete` hook returns a stop decision, the exchange is now
+  persisted to the thread store like a natural final response, so the next
+  `Execute` on the same ThreadID no longer starts with a hole in its history.
+
 ## [0.25.0] - 2026-07-01
 
 ### Added
